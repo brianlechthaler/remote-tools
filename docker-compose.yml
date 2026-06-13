@@ -20,7 +20,7 @@ services:
       TS_USERSPACE: "false"
       TS_ENABLE_HEALTH_CHECK: "true"
       TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
-      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---ssh --accept-routes}
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---accept-routes}
     restart: unless-stopped
     healthcheck:
       test: ["CMD-SHELL", "tailscale status --peers=false 2>/dev/null | grep -qE '^100\\.'"]
