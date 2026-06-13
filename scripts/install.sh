@@ -51,6 +51,11 @@ setup_env() {
   else
     chmod 600 "${ENV_FILE}"
   fi
+
+  if ! grep -qE '^TS_HOSTNAME=' "${ENV_FILE}"; then
+    echo "TS_HOSTNAME=$(hostname -s)" >> "${ENV_FILE}"
+    log "set TS_HOSTNAME=$(hostname -s)"
+  fi
 }
 
 install_systemd_units() {
