@@ -1,0 +1,34 @@
+services:
+  tailscale:
+    image: ghcr.io/brianlechthaler/remote-tools:latest
+    container_name: remote-tools-tailscale
+    hostname: ${TS_HOSTNAME:-remote-tools}
+    network_mode: host
+    cap_add:
+      - NET_ADMIN
+      - NET_RAW
+      - SYS_MODULE
+    devices:
+      - /dev/net/tun:/dev/net/tun
+    volumes:
+      - tailscale-state:/var/lib/tailscale
+    env_file:
+      - /etc/remote-tools/env
+    environment:
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_AUTH_ONCE: "true"
+      TS_USERSPACE: "false"
+      TS_ENABLE_HEALTH_CHECK: "true"
+      TS_LOCAL_ADDR_PORT: 127.0.0.1:9002
+      TS_EXTRA_ARGS: ${TS_EXTRA_ARGS:---ssh --accept-routes}
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD-SHELL", "tailscale status --peers=false 2>/dev/null | grep -qE '^100\\.'"]
+      interval: 60s
+      timeout: 10s
+      retries: 3
+      start_period: 90s
+
+volumes:
+  tailscale-state:
+    name: remote-tools-tailscale-state

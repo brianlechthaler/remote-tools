@@ -1,0 +1,12 @@
+[Unit]
+Description=Run Remote Tools health watchdog periodically
+Documentation=https://github.com/brianlechthaler/remote-tools
+
+[Timer]
+OnBootSec=3min
+OnUnitActiveSec=5min
+Persistent=true
+RandomizedDelaySec=30
+
+[Install]
+WantedBy=timers.target

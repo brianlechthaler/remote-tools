@@ -1,0 +1,9 @@
+[Unit]
+Description=Remote Tools health watchdog
+Documentation=https://github.com/brianlechthaler/remote-tools
+After=docker.service remote-tools.service
+
+[Service]
+Type=oneshot
+Environment=INSTALL_DIR=/opt/remote-tools
+ExecStart=/opt/remote-tools/scripts/healthcheck.sh

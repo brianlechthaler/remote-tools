@@ -1,0 +1,21 @@
+[Unit]
+Description=Remote Tools Tailscale (Docker)
+Documentation=https://github.com/brianlechthaler/remote-tools
+After=docker.service network-online.target
+Wants=network-online.target
+Requires=docker.service
+
+[Service]
+Type=oneshot
+RemainAfterExit=yes
+Environment=INSTALL_DIR=/opt/remote-tools
+ExecStart=/opt/remote-tools/scripts/start.sh
+ExecReload=/opt/remote-tools/scripts/start.sh
+TimeoutStartSec=300
+
+# Layer 1 redundancy: systemd restarts the start script on failure.
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=multi-user.target

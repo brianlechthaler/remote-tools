@@ -1,0 +1,9 @@
+[Unit]
+Description=Pull latest Remote Tools release from GitHub
+Documentation=https://github.com/brianlechthaler/remote-tools
+After=docker.service network-online.target remote-tools.service
+
+[Service]
+Type=oneshot
+Environment=INSTALL_DIR=/opt/remote-tools
+ExecStart=/opt/remote-tools/scripts/update.sh
