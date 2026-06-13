@@ -48,7 +48,9 @@ Environment file: `/etc/remote-tools/env`
 |----------|----------|-------------|
 | `TS_AUTHKEY` | Yes | Tailscale auth key (`tskey-auth-...`) |
 | `TS_HOSTNAME` | No | Name shown in the admin console |
-| `TS_EXTRA_ARGS` | No | Extra flags for `tailscale up` (default: `--ssh --accept-routes`) |
+| `TS_EXTRA_ARGS` | No | Extra flags for `tailscale up` (default: `--accept-routes`) |
+
+**SSH access:** Connect with regular OpenSSH over the tailnet (`ssh user@hostname`). Do not enable Tailscale SSH (`--ssh`) in Docker — it looks up users inside the container, not on the host, and will fail with `failed to look up local user`.
 
 ## Operations
 
