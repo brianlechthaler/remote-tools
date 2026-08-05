@@ -84,7 +84,7 @@ Published to:
 ghcr.io/brianlechthaler/remote-tools:latest
 ```
 
-Built from `tailscale/tailscale:stable` with health-check defaults enabled. Pushes to `main` trigger the [build workflow](.github/workflows/build-and-publish.yml).
+Built from `tailscale/tailscale:v1.98.10` with health-check defaults enabled. Pushes to `main` trigger the [build workflow](.github/workflows/build-and-publish.yml).
 
 ## Development
 
