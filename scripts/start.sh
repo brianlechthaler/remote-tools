@@ -48,6 +48,21 @@ ensure_tun() {
   fi
 }
 
+# Exit nodes (and subnet routers) need the host kernel to forward packets.
+ensure_ip_forwarding() {
+  local conf="/etc/sysctl.d/99-remote-tools-tailscale.conf"
+  cat > "${conf}" <<'EOF'
+# Required for Tailscale exit node mode (managed by remote-tools)
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+  if ! sysctl -p "${conf}" >/dev/null; then
+    log "ERROR: failed to apply IP forwarding sysctl from ${conf}"
+    return 1
+  fi
+  log "IP forwarding enabled for exit node mode"
+}
+
 validate_config() {
   if [[ ! -f "${ENV_FILE}" ]]; then
     log "ERROR: missing ${ENV_FILE} (copy config/env.example and set TS_AUTHKEY)"
@@ -84,6 +99,7 @@ main() {
   validate_config
   wait_for_docker
   ensure_tun
+  ensure_ip_forwarding
   start_stack
 }
 

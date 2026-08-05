@@ -5,6 +5,7 @@ Unattended Tailscale remote access for a Linux host, running in Docker with laye
 ## What it does
 
 - Runs [Tailscale](https://tailscale.com/) in a Docker container with **host networking** so you can SSH to this machine over your tailnet
+- Advertises itself as a Tailscale **exit node** so other devices can route internet traffic through this host
 - Starts automatically on boot via **systemd**
 - **Health watchdog** checks every 5 minutes and restarts if the container or tailnet connection fails
 - **Auto-updater** pulls the latest config from `main` and the latest container from GHCR every 6 hours
@@ -48,9 +49,11 @@ Environment file: `/etc/remote-tools/env`
 |----------|----------|-------------|
 | `TS_AUTHKEY` | Yes | Tailscale auth key (`tskey-auth-...`) |
 | `TS_HOSTNAME` | No | Name shown in the admin console |
-| `TS_EXTRA_ARGS` | No | Extra flags for `tailscale up` (default: `--accept-routes`) |
+| `TS_EXTRA_ARGS` | No | Extra flags for `tailscale up` (default: `--accept-routes --advertise-exit-node`) |
 
 **SSH access:** Connect with regular OpenSSH over the tailnet (`ssh user@hostname`). Do not enable Tailscale SSH (`--ssh`) in Docker — it looks up users inside the container, not on the host, and will fail with `failed to look up local user`.
+
+**Exit node:** The stack advertises this host as an exit node and enables IPv4/IPv6 forwarding on the host (`/etc/sysctl.d/99-remote-tools-tailscale.conf`). After the node appears online, approve it in the [Tailscale admin console](https://login.tailscale.com/admin/machines): **Machines → … → Edit route settings → Use as exit node**. Other devices can then select this machine as their exit node.
 
 ## Operations
 

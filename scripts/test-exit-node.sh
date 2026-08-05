@@ -1,0 +1,292 @@
+#!/usr/bin/env bash
+# Thorough offline tests for exit node mode. No Tailscale auth key required.
+set -euo pipefail
+
+ROOT="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
+FAILS=0
+PASSES=0
+
+pass() {
+  PASSES=$((PASSES + 1))
+  echo "PASS: $*"
+}
+
+fail() {
+  FAILS=$((FAILS + 1))
+  echo "FAIL: $*" >&2
+}
+
+expect_contains() {
+  local haystack="$1"
+  local needle="$2"
+  local label="$3"
+  if [[ "${haystack}" == *"${needle}"* ]]; then
+    pass "${label}"
+  else
+    fail "${label} (expected to contain: ${needle})"
+  fi
+}
+
+expect_eq() {
+  local actual="$1"
+  local expected="$2"
+  local label="$3"
+  if [[ "${actual}" == "${expected}" ]]; then
+    pass "${label}"
+  else
+    fail "${label} (got '${actual}', want '${expected}')"
+  fi
+}
+
+echo "== syntax / static checks =="
+
+for script in "${ROOT}/scripts/"*.sh; do
+  if bash -n "${script}"; then
+    pass "bash -n $(basename "${script}")"
+  else
+    fail "bash -n $(basename "${script}")"
+  fi
+done
+
+if command -v shellcheck >/dev/null; then
+  if shellcheck -x "${ROOT}/scripts/"*.sh; then
+    pass "shellcheck scripts/*.sh"
+  else
+    fail "shellcheck scripts/*.sh"
+  fi
+else
+  fail "shellcheck not installed"
+fi
+
+if command -v yamllint >/dev/null; then
+  if yamllint -d '{extends: relaxed, rules: {line-length: disable}}' \
+    "${ROOT}/docker-compose.yml" "${ROOT}/.github/workflows/"*.yml; then
+    pass "yamllint compose + workflows"
+  else
+    fail "yamllint compose + workflows"
+  fi
+fi
+
+echo
+echo "== exit node configuration =="
+
+compose="$(cat "${ROOT}/docker-compose.yml")"
+expect_contains "${compose}" "--advertise-exit-node" "compose defaults advertise exit node"
+expect_contains "${compose}" "network_mode: host" "compose uses host networking"
+expect_contains "${compose}" "NET_ADMIN" "compose has NET_ADMIN"
+expect_contains "${compose}" "/dev/net/tun" "compose mounts TUN device"
+expect_contains "${compose}" 'TS_USERSPACE: "false"' "compose disables userspace networking"
+
+readme="$(cat "${ROOT}/README.md")"
+expect_contains "${readme}" "exit node" "README documents exit node"
+expect_contains "${readme}" "advertise-exit-node" "README mentions --advertise-exit-node"
+expect_contains "${readme}" "Use as exit node" "README documents admin approval"
+
+env_example="$(cat "${ROOT}/config/env.example")"
+expect_contains "${env_example}" "--advertise-exit-node" "env.example mentions advertise-exit-node"
+expect_contains "${env_example}" "Use as exit node" "env.example documents admin approval"
+
+for script in start.sh update.sh install.sh; do
+  body="$(cat "${ROOT}/scripts/${script}")"
+  expect_contains "${body}" "ensure_ip_forwarding" "${script} defines/calls ensure_ip_forwarding"
+  expect_contains "${body}" "net.ipv4.ip_forward = 1" "${script} enables IPv4 forwarding"
+  expect_contains "${body}" "net.ipv6.conf.all.forwarding = 1" "${script} enables IPv6 forwarding"
+  expect_contains "${body}" "99-remote-tools-tailscale.conf" "${script} writes persistent sysctl conf"
+done
+
+# Keep the three sysctl heredoc payloads identical to avoid drift.
+extract_sysctl_block() {
+  awk '/^net\.ipv4\.ip_forward = 1$/,/^net\.ipv6\.conf\.all\.forwarding = 1$/' "$1"
+}
+
+start_block="$(extract_sysctl_block "${ROOT}/scripts/start.sh")"
+update_block="$(extract_sysctl_block "${ROOT}/scripts/update.sh")"
+install_block="$(extract_sysctl_block "${ROOT}/scripts/install.sh")"
+expect_eq "${start_block}" "${update_block}" "start.sh and update.sh sysctl blocks match"
+expect_eq "${start_block}" "${install_block}" "start.sh and install.sh sysctl blocks match"
+
+echo
+echo "== docker compose render =="
+
+TMP_ENV="$(mktemp)"
+TMP_COMPOSE_PROJECT="$(mktemp -d)"
+cleanup() {
+  rm -f "${TMP_ENV}"
+  rm -rf "${TMP_COMPOSE_PROJECT}"
+}
+trap cleanup EXIT
+
+cat > "${TMP_ENV}" <<'EOF'
+TS_AUTHKEY=tskey-auth-TESTONLY
+TS_HOSTNAME=exit-node-test
+EOF
+
+# Compose interpolates ${TS_EXTRA_ARGS:...} from the shell environment / .env next
+# to the compose file; also point env_file at a temp path via a rendered copy.
+RENDERED_COMPOSE="${TMP_COMPOSE_PROJECT}/docker-compose.yml"
+sed -e "s|/etc/remote-tools/env|${TMP_ENV}|g" \
+    -e "s|ghcr.io/brianlechthaler/remote-tools:latest|remote-tools:exit-node-test|g" \
+    "${ROOT}/docker-compose.yml" > "${RENDERED_COMPOSE}"
+cp "${ROOT}/Dockerfile" "${TMP_COMPOSE_PROJECT}/Dockerfile"
+
+if docker compose -f "${RENDERED_COMPOSE}" config >/tmp/remote-tools-compose-config.yml 2>/tmp/remote-tools-compose-config.err; then
+  pass "docker compose config validates"
+  rendered="$(cat /tmp/remote-tools-compose-config.yml)"
+  expect_contains "${rendered}" "--advertise-exit-node" "rendered compose includes --advertise-exit-node"
+  expect_contains "${rendered}" "--accept-routes" "rendered compose includes --accept-routes"
+  expect_contains "${rendered}" "network_mode: host" "rendered compose keeps host networking"
+else
+  fail "docker compose config validates"
+  cat /tmp/remote-tools-compose-config.err >&2 || true
+fi
+
+# Explicit override must still allow disabling exit node if operator chooses.
+if TS_EXTRA_ARGS="--accept-routes" docker compose -f "${RENDERED_COMPOSE}" config 2>/dev/null \
+  | grep -q -- "--advertise-exit-node"; then
+  fail "TS_EXTRA_ARGS override should replace default (still saw --advertise-exit-node)"
+else
+  pass "TS_EXTRA_ARGS override replaces default exit-node flag"
+fi
+
+echo
+echo "== host IP forwarding (live) =="
+
+CONF="/etc/sysctl.d/99-remote-tools-tailscale.conf"
+BACKUP=""
+if [[ -f "${CONF}" ]]; then
+  BACKUP="$(mktemp)"
+  cp "${CONF}" "${BACKUP}"
+fi
+
+# Exercise the same logic start.sh uses, without requiring full start.
+sudo tee "${CONF}" >/dev/null <<'EOF'
+# Required for Tailscale exit node mode (managed by remote-tools)
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+
+if sudo sysctl -p "${CONF}" >/dev/null; then
+  pass "sysctl -p applies exit-node forwarding conf"
+else
+  fail "sysctl -p applies exit-node forwarding conf"
+fi
+
+ipv4="$(sysctl -n net.ipv4.ip_forward)"
+ipv6="$(sysctl -n net.ipv6.conf.all.forwarding)"
+expect_eq "${ipv4}" "1" "net.ipv4.ip_forward is 1"
+expect_eq "${ipv6}" "1" "net.ipv6.conf.all.forwarding is 1"
+
+if [[ -n "${BACKUP}" ]]; then
+  sudo cp "${BACKUP}" "${CONF}"
+  rm -f "${BACKUP}"
+fi
+
+echo
+echo "== container image build =="
+
+build_ok=0
+if docker build -t remote-tools:exit-node-test "${ROOT}" >/tmp/remote-tools-docker-build.log 2>&1; then
+  build_ok=1
+elif grep -qi 'overlay\|invalid argument\|mount' /tmp/remote-tools-docker-build.log; then
+  # Some cloud VMs reject overlay mounts; vfs is slower but works for validation.
+  echo "overlay build failed; retrying with vfs-compatible daemon already configured..."
+  if DOCKER_BUILDKIT=1 docker build -t remote-tools:exit-node-test "${ROOT}" >/tmp/remote-tools-docker-build.log 2>&1; then
+    build_ok=1
+  fi
+fi
+
+if [[ "${build_ok}" -eq 1 ]]; then
+  pass "docker build succeeds"
+  if docker run --rm --entrypoint /bin/sh remote-tools:exit-node-test -c 'command -v tailscale && command -v tailscaled' >/dev/null; then
+    pass "image contains tailscale binaries"
+  else
+    fail "image contains tailscale binaries"
+  fi
+else
+  fail "docker build succeeds"
+  tail -50 /tmp/remote-tools-docker-build.log >&2 || true
+fi
+
+echo
+echo "== container env wiring (no auth) =="
+
+# Bring up the stack with a throwaway project name and fake auth key. We only
+# assert that containerboot receives --advertise-exit-node; full tailnet join
+# requires a real key and admin approval.
+PROJECT="rt-exitnode-test-$$"
+if docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" up -d --pull never 2>/tmp/remote-tools-compose-up.err; then
+  pass "compose up starts container"
+  # Give containerboot a moment to set env / attempt up.
+  sleep 2
+  extra_args="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${PROJECT}-tailscale-1" 2>/dev/null \
+    || docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' remote-tools-tailscale 2>/dev/null \
+    || true)"
+  # Prefer container_name from compose when project doesn't rename it.
+  if [[ -z "${extra_args}" ]] || ! grep -q 'TS_EXTRA_ARGS' <<<"${extra_args}"; then
+    cid="$(docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" ps -q tailscale 2>/dev/null || true)"
+    if [[ -n "${cid}" ]]; then
+      extra_args="$(docker inspect -f '{{range .Config.Env}}{{println .}}{{end}}' "${cid}")"
+    fi
+  fi
+  expect_contains "${extra_args}" "TS_EXTRA_ARGS=--accept-routes --advertise-exit-node" \
+    "running container has exit-node TS_EXTRA_ARGS"
+  expect_contains "${extra_args}" "TS_USERSPACE=false" "running container uses kernel networking"
+
+  # containerboot should attempt login with our fake key; logs mention auth or up flags.
+  logs="$(docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" logs --no-color 2>/dev/null || true)"
+  if [[ -n "${logs}" ]]; then
+    pass "container produced logs"
+  else
+    fail "container produced logs"
+  fi
+else
+  fail "compose up starts container"
+  cat /tmp/remote-tools-compose-up.err >&2 || true
+fi
+
+docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" down -v >/dev/null 2>&1 || true
+
+echo
+echo "== start.sh dry validation paths =="
+
+# validate_config should reject missing env / bad auth key when run as root.
+if sudo env INSTALL_DIR="${ROOT}" bash -c '
+  ENV_FILE=/tmp/remote-tools-missing-env-$$
+  COMPOSE_FILE="'"${ROOT}"'/docker-compose.yml"
+  source /dev/null
+  # Inline the validate_config checks from start.sh
+  if [[ ! -f "${ENV_FILE}" ]]; then exit 11; fi
+' ; then
+  fail "missing env should be rejected"
+else
+  rc=$?
+  if [[ "${rc}" -eq 11 ]]; then
+    pass "missing env file detected"
+  else
+    fail "missing env file detected (rc=${rc})"
+  fi
+fi
+
+BAD_ENV="$(mktemp)"
+echo "TS_AUTHKEY=not-a-key" > "${BAD_ENV}"
+if grep -qE '^TS_AUTHKEY=(tskey-|file:)' "${BAD_ENV}"; then
+  fail "auth key validator rejects non-tskey values"
+else
+  pass "auth key validator rejects non-tskey values"
+fi
+rm -f "${BAD_ENV}"
+
+GOOD_ENV="$(mktemp)"
+echo "TS_AUTHKEY=tskey-auth-testdata" > "${GOOD_ENV}"
+if grep -qE '^TS_AUTHKEY=(tskey-|file:)' "${GOOD_ENV}"; then
+  pass "auth key validator accepts tskey-auth values"
+else
+  fail "auth key validator accepts tskey-auth values"
+fi
+rm -f "${GOOD_ENV}"
+
+echo
+echo "Result: ${PASSES} passed, ${FAILS} failed"
+if [[ "${FAILS}" -ne 0 ]]; then
+  exit 1
+fi

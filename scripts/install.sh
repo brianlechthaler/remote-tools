@@ -58,6 +58,21 @@ setup_env() {
   fi
 }
 
+# Exit nodes need host IP forwarding; keep this in sync with start.sh / update.sh.
+ensure_ip_forwarding() {
+  local conf="/etc/sysctl.d/99-remote-tools-tailscale.conf"
+  cat > "${conf}" <<'EOF'
+# Required for Tailscale exit node mode (managed by remote-tools)
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+  if ! sysctl -p "${conf}" >/dev/null; then
+    log "ERROR: failed to apply IP forwarding sysctl from ${conf}"
+    return 1
+  fi
+  log "IP forwarding enabled for exit node mode"
+}
+
 install_systemd_units() {
   install -m 644 "${INSTALL_DIR}/systemd/"*.service /etc/systemd/system/
   install -m 644 "${INSTALL_DIR}/systemd/"*.timer /etc/systemd/system/
@@ -88,6 +103,7 @@ main() {
   install_packages
   clone_or_update_repo
   setup_env
+  ensure_ip_forwarding
   make_scripts_executable
   install_systemd_units
   start_services
@@ -105,6 +121,9 @@ Install complete.
 3. Check status:
      systemctl status remote-tools
      docker logs remote-tools-tailscale
+
+4. Approve exit node in the Tailscale admin console:
+     Machines → … → Edit route settings → Use as exit node
 
 EOF
 }
