@@ -6,7 +6,6 @@ INSTALL_DIR="${INSTALL_DIR:-/opt/remote-tools}"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 IMAGE="ghcr.io/brianlechthaler/remote-tools:latest"
 LOG_TAG="remote-tools-update"
-REPO_URL="https://github.com/brianlechthaler/remote-tools.git"
 
 log() {
   echo "[$(date -Is)] $*"
@@ -15,6 +14,21 @@ log() {
 
 image_id() {
   docker image inspect -f '{{.Id}}' "${IMAGE}" 2>/dev/null || echo ""
+}
+
+# Exit nodes need host IP forwarding; keep this in sync with start.sh.
+ensure_ip_forwarding() {
+  local conf="/etc/sysctl.d/99-remote-tools-tailscale.conf"
+  cat > "${conf}" <<'EOF'
+# Required for Tailscale exit node mode (managed by remote-tools)
+net.ipv4.ip_forward = 1
+net.ipv6.conf.all.forwarding = 1
+EOF
+  if ! sysctl -p "${conf}" >/dev/null; then
+    log "ERROR: failed to apply IP forwarding sysctl from ${conf}"
+    return 1
+  fi
+  log "IP forwarding enabled for exit node mode"
 }
 
 reload_systemd_units() {
@@ -59,6 +73,7 @@ main() {
 
   sync_repo
   reload_systemd_units
+  ensure_ip_forwarding
   apply_container_update
   log "update complete"
 }
