@@ -53,7 +53,7 @@ Environment file: `/etc/remote-tools/env`
 
 **SSH access:** Connect with regular OpenSSH over the tailnet (`ssh user@hostname`). Do not enable Tailscale SSH (`--ssh`) in Docker — it looks up users inside the container, not on the host, and will fail with `failed to look up local user`.
 
-**Exit node:** The stack advertises this host as an exit node and enables IPv4/IPv6 forwarding on the host (`/etc/sysctl.d/99-remote-tools-tailscale.conf`). After the node appears online, approve it in the [Tailscale admin console](https://login.tailscale.com/admin/machines): **Machines → … → Edit route settings → Use as exit node**. Other devices can then select this machine as their exit node.
+**Exit node:** The stack advertises this host as an exit node and enables IPv4/IPv6 forwarding on the host (`/etc/sysctl.d/99-remote-tools-tailscale.conf`). Because Tailscale's container entrypoint ignores `TS_EXTRA_ARGS` on already-authenticated nodes (`TS_AUTH_ONCE`), `start.sh` / `update.sh` / `healthcheck.sh` also run `tailscale set` with those flags so `--advertise-exit-node` actually sticks after upgrades. After the node appears online, approve it in the [Tailscale admin console](https://login.tailscale.com/admin/machines): **Machines → … → Edit route settings → Use as exit node**. Other devices can then select this machine as their exit node.
 
 ## Operations
 

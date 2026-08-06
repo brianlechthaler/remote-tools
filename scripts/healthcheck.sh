@@ -79,6 +79,12 @@ main() {
     exit 0
   fi
 
+  # Keep exit-node / ExtraArgs prefs applied even if start raced ahead of login.
+  if [[ -x "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" ]]; then
+    CONTAINER="${CONTAINER}" LOG_TAG="${LOG_TAG}" MAX_ATTEMPTS=3 RETRY_DELAY=1 \
+      "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" || true
+  fi
+
   log "healthy"
 }
 

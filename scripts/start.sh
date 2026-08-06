@@ -94,6 +94,17 @@ start_stack() {
   return 1
 }
 
+# containerboot drops TS_EXTRA_ARGS on the TS_AUTH_ONCE `tailscale set` path;
+# re-apply so --advertise-exit-node takes effect on already-joined nodes.
+apply_extra_args() {
+  if [[ -x "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" ]]; then
+    CONTAINER=remote-tools-tailscale LOG_TAG="${LOG_TAG}" \
+      "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" || true
+  else
+    log "WARNING: missing ${INSTALL_DIR}/scripts/apply-ts-extra-args.sh"
+  fi
+}
+
 main() {
   require_root
   validate_config
@@ -101,6 +112,7 @@ main() {
   ensure_tun
   ensure_ip_forwarding
   start_stack
+  apply_extra_args
 }
 
 main "$@"

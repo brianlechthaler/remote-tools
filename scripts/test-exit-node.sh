@@ -94,6 +94,21 @@ for script in start.sh update.sh install.sh; do
   expect_contains "${body}" "99-remote-tools-tailscale.conf" "${script} writes persistent sysctl conf"
 done
 
+expect_contains "$(cat "${ROOT}/scripts/start.sh")" "apply-ts-extra-args.sh" \
+  "start.sh re-applies TS_EXTRA_ARGS after stack start"
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" "apply-ts-extra-args.sh" \
+  "update.sh re-applies TS_EXTRA_ARGS after container update"
+expect_contains "$(cat "${ROOT}/scripts/healthcheck.sh")" "apply-ts-extra-args.sh" \
+  "healthcheck.sh re-applies TS_EXTRA_ARGS when healthy"
+expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "tailscale set" \
+  "apply-ts-extra-args.sh uses tailscale set"
+expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "AdvertiseExitNode" \
+  "apply-ts-extra-args.sh checks AdvertiseExitNode prefs"
+expect_contains "$(cat "${ROOT}/scripts/install.sh")" "migrate_env_exit_node" \
+  "install.sh migrates env files missing exit-node flag"
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" "migrate_env_exit_node" \
+  "update.sh migrates env files missing exit-node flag"
+
 # Keep the three sysctl heredoc payloads identical to avoid drift.
 extract_sysctl_block() {
   awk '/^net\.ipv4\.ip_forward = 1$/,/^net\.ipv6\.conf\.all\.forwarding = 1$/' "$1"
@@ -245,6 +260,66 @@ else
 fi
 
 docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" down -v >/dev/null 2>&1 || true
+
+echo
+echo "== env migration =="
+
+MIG_ENV="$(mktemp)"
+cat > "${MIG_ENV}" <<'EOF'
+TS_AUTHKEY=tskey-auth-TESTONLY
+TS_EXTRA_ARGS=--accept-routes --advertise-tags=tag:remote
+EOF
+
+# Exercise install.sh's migrate logic inline (same algorithm).
+migrate_env_exit_node_test() {
+  local env_file="$1"
+  local tmp replaced=0 line current
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" == TS_EXTRA_ARGS=* && "${replaced}" -eq 0 ]]; then
+      current="${line#TS_EXTRA_ARGS=}"
+      if [[ "${current}" == *"--advertise-exit-node"* ]]; then
+        printf '%s\n' "${line}"
+      else
+        printf 'TS_EXTRA_ARGS=%s --advertise-exit-node\n' "${current}"
+      fi
+      replaced=1
+    else
+      printf '%s\n' "${line}"
+    fi
+  done < "${env_file}" > "${tmp}"
+  mv "${tmp}" "${env_file}"
+}
+
+migrate_env_exit_node_test "${MIG_ENV}"
+migrated="$(cat "${MIG_ENV}")"
+expect_contains "${migrated}" "--advertise-exit-node" "migration appends --advertise-exit-node"
+expect_contains "${migrated}" "--accept-routes" "migration preserves --accept-routes"
+expect_contains "${migrated}" "--advertise-tags=tag:remote" "migration preserves existing flags"
+rm -f "${MIG_ENV}"
+
+MIG_ENV2="$(mktemp)"
+cat > "${MIG_ENV2}" <<'EOF'
+TS_AUTHKEY=tskey-auth-TESTONLY
+TS_EXTRA_ARGS=--accept-routes --advertise-exit-node
+EOF
+before="$(cat "${MIG_ENV2}")"
+migrate_env_exit_node_test "${MIG_ENV2}"
+after="$(cat "${MIG_ENV2}")"
+expect_eq "${after}" "${before}" "migration is idempotent when exit-node already present"
+rm -f "${MIG_ENV2}"
+
+echo
+echo "== apply-ts-extra-args.sh dry behavior =="
+
+# Without a running container, the helper should no-op successfully.
+if CONTAINER=remote-tools-does-not-exist MAX_ATTEMPTS=1 RETRY_DELAY=0 \
+  bash "${ROOT}/scripts/apply-ts-extra-args.sh" >/tmp/remote-tools-apply-extra.out 2>&1; then
+  pass "apply-ts-extra-args.sh no-ops when container missing"
+else
+  fail "apply-ts-extra-args.sh no-ops when container missing"
+  cat /tmp/remote-tools-apply-extra.out >&2 || true
+fi
 
 echo
 echo "== start.sh dry validation paths =="
