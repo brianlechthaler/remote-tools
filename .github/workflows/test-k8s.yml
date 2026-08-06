@@ -38,8 +38,18 @@ jobs:
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
           kind version
 
+      - name: Install kwokctl (fallback when kind cannot boot)
+        run: |
+          curl -fsSL -o /tmp/kwokctl \
+            "https://github.com/kubernetes-sigs/kwok/releases/download/v0.6.1/kwokctl-linux-amd64"
+          sudo install -m 0755 /tmp/kwokctl /usr/local/bin/kwokctl
+          kwokctl --version
+
       - name: Install shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
 
       - name: Run Kubernetes tests
         run: bash scripts/test-k8s.sh
+        env:
+          # Prefer kind on GitHub-hosted runners; fail closed if it cannot start.
+          CLUSTER_PROVIDER: kind

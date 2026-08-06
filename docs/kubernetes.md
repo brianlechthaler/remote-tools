@@ -152,11 +152,12 @@ Useful env vars:
 
 | Variable | Default | Meaning |
 |----------|---------|---------|
-| `KEEP_CLUSTER` | `0` | Set `1` to leave the kind cluster up |
-| `SKIP_KIND` | `0` | Set `1` for manifest/image checks only |
-| `WAIT_SECONDS` | `180` | Pod readiness timeout |
+| `KEEP_CLUSTER` | `0` | Set `1` to leave the kind/kwok cluster up |
+| `SKIP_CLUSTER` | `0` | Set `1` for manifest/image checks only |
+| `CLUSTER_PROVIDER` | `auto` | `kind`, `kwok`, `docker`, or `auto` (prefer kind; outside CI fall back to Docker runtime simulation) |
+| `WAIT_SECONDS` | `180` | Pod / container readiness timeout |
 
-CI runs the same script via [`.github/workflows/test-k8s.yml`](../.github/workflows/test-k8s.yml).
+CI runs the same script via [`.github/workflows/test-k8s.yml`](../.github/workflows/test-k8s.yml) and requires **kind** on GitHub-hosted runners.
 
 ## RBAC
 
