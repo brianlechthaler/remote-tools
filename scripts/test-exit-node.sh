@@ -202,11 +202,14 @@ echo "== container image build =="
 build_ok=0
 if docker build -t remote-tools:exit-node-test "${ROOT}" >/tmp/remote-tools-docker-build.log 2>&1; then
   build_ok=1
-elif grep -qi 'overlay\|invalid argument\|mount' /tmp/remote-tools-docker-build.log; then
-  # Some cloud VMs reject overlay mounts; vfs is slower but works for validation.
-  echo "overlay build failed; retrying with vfs-compatible daemon already configured..."
-  if DOCKER_BUILDKIT=1 docker build -t remote-tools:exit-node-test "${ROOT}" >/tmp/remote-tools-docker-build.log 2>&1; then
-    build_ok=1
+else
+  # Cloud/nested VMs often lack buildx or reject overlay mounts.
+  if grep -qiE 'buildx|BuildKit|overlay|invalid argument|mount' /tmp/remote-tools-docker-build.log; then
+    echo "default build failed; retrying with DOCKER_BUILDKIT=0..."
+    if DOCKER_BUILDKIT=0 docker build -t remote-tools:exit-node-test "${ROOT}" \
+      >/tmp/remote-tools-docker-build.log 2>&1; then
+      build_ok=1
+    fi
   fi
 fi
 
@@ -246,6 +249,27 @@ if docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" up -d --pull never 2>
   expect_contains "${extra_args}" "TS_EXTRA_ARGS=--accept-routes --advertise-exit-node" \
     "running container has exit-node TS_EXTRA_ARGS"
   expect_contains "${extra_args}" "TS_USERSPACE=false" "running container uses kernel networking"
+
+  # Apply helper should target this container; without a real login, set will
+  # fail and the script warns but must still exit 0 (non-fatal for start/update).
+  cid="$(docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" ps -q tailscale 2>/dev/null || true)"
+  cname="$(docker inspect -f '{{.Name}}' "${cid}" 2>/dev/null | sed 's#^/##')"
+  if [[ -n "${cname}" ]] \
+    && CONTAINER="${cname}" MAX_ATTEMPTS=2 RETRY_DELAY=1 \
+         bash "${ROOT}/scripts/apply-ts-extra-args.sh" \
+         >/tmp/remote-tools-apply-live.out 2>&1; then
+    pass "apply-ts-extra-args.sh exits 0 against running unauthenticated container"
+    if grep -qiE 'tailscale set|TS_EXTRA_ARGS|not ready|WARNING|already match' \
+      /tmp/remote-tools-apply-live.out; then
+      pass "apply-ts-extra-args.sh attempted set or reported status"
+    else
+      fail "apply-ts-extra-args.sh attempted set or reported status"
+      cat /tmp/remote-tools-apply-live.out >&2 || true
+    fi
+  else
+    fail "apply-ts-extra-args.sh exits 0 against running unauthenticated container"
+    cat /tmp/remote-tools-apply-live.out >&2 || true
+  fi
 
   # containerboot should attempt login with our fake key; logs mention auth or up flags.
   logs="$(docker compose -p "${PROJECT}" -f "${RENDERED_COMPOSE}" logs --no-color 2>/dev/null || true)"
