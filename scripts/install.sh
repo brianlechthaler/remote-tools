@@ -58,19 +58,14 @@ setup_env() {
   fi
 }
 
-# Exit nodes need host IP forwarding; keep this in sync with start.sh / update.sh.
-ensure_ip_forwarding() {
-  local conf="/etc/sysctl.d/99-remote-tools-tailscale.conf"
-  cat > "${conf}" <<'EOF'
-# Required for Tailscale exit node mode (managed by remote-tools)
-net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
-EOF
-  if ! sysctl -p "${conf}" >/dev/null; then
-    log "ERROR: failed to apply IP forwarding sysctl from ${conf}"
+# Exit nodes need forwarding, loose rp_filter, and host NAT/firewall path.
+ensure_exit_node_networking() {
+  if [[ -x "${INSTALL_DIR}/scripts/ensure-exit-node-networking.sh" ]]; then
+    LOG_TAG="${LOG_TAG}" "${INSTALL_DIR}/scripts/ensure-exit-node-networking.sh"
+  else
+    log "ERROR: missing ${INSTALL_DIR}/scripts/ensure-exit-node-networking.sh"
     return 1
   fi
-  log "IP forwarding enabled for exit node mode"
 }
 
 install_systemd_units() {
@@ -142,8 +137,8 @@ main() {
   clone_or_update_repo
   setup_env
   migrate_env_exit_node
-  ensure_ip_forwarding
   make_scripts_executable
+  ensure_exit_node_networking
   install_systemd_units
   start_services
 
