@@ -177,12 +177,13 @@ if [[ -f "${CONF}" ]]; then
   cp "${CONF}" "${BACKUP}"
 fi
 
-if sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" \
-  >/tmp/remote-tools-networking.out 2>&1; then
+net_out=""
+if net_out="$(sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" 2>&1)"; then
   pass "ensure-exit-node-networking.sh exits 0"
+  printf '%s\n' "${net_out}" > /tmp/remote-tools-networking.out
 else
   fail "ensure-exit-node-networking.sh exits 0"
-  cat /tmp/remote-tools-networking.out >&2 || true
+  printf '%s\n' "${net_out}" >&2 || true
 fi
 
 ipv4="$(sysctl -n net.ipv4.ip_forward)"
@@ -210,12 +211,13 @@ if command -v iptables >/dev/null; then
     fail "iptables FORWARD ACCEPT for tailscale0 installed"
   fi
   # Idempotency: second run must not fail or duplicate-error.
-  if sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" \
-    >/tmp/remote-tools-networking2.out 2>&1; then
+  net_out2=""
+  if net_out2="$(sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" 2>&1)"; then
     pass "ensure-exit-node-networking.sh is idempotent"
+    printf '%s\n' "${net_out2}" > /tmp/remote-tools-networking2.out
   else
     fail "ensure-exit-node-networking.sh is idempotent"
-    cat /tmp/remote-tools-networking2.out >&2 || true
+    printf '%s\n' "${net_out2}" >&2 || true
   fi
 else
   fail "iptables not installed"
