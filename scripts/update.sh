@@ -65,6 +65,51 @@ apply_container_update() {
   fi
 }
 
+# Re-apply TS_EXTRA_ARGS after recreate; containerboot omits them under TS_AUTH_ONCE.
+apply_extra_args() {
+  if [[ -x "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" ]]; then
+    CONTAINER=remote-tools-tailscale LOG_TAG="${LOG_TAG}" \
+      "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" || true
+  else
+    log "WARNING: missing ${INSTALL_DIR}/scripts/apply-ts-extra-args.sh"
+  fi
+}
+
+# Keep /etc/remote-tools/env in sync with exit-node defaults for existing installs.
+migrate_env_exit_node() {
+  local env_file="/etc/remote-tools/env"
+  if [[ ! -f "${env_file}" ]]; then
+    return 0
+  fi
+  if grep -qE '^TS_EXTRA_ARGS=.*--advertise-exit-node' "${env_file}"; then
+    return 0
+  fi
+  if ! grep -qE '^TS_EXTRA_ARGS=' "${env_file}"; then
+    return 0
+  fi
+
+  local tmp replaced=0 line current
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" == TS_EXTRA_ARGS=* && "${replaced}" -eq 0 ]]; then
+      current="${line#TS_EXTRA_ARGS=}"
+      if [[ "${current}" == *"--advertise-exit-node"* ]]; then
+        printf '%s\n' "${line}"
+      else
+        printf 'TS_EXTRA_ARGS=%s --advertise-exit-node\n' "${current}"
+      fi
+      replaced=1
+    else
+      printf '%s\n' "${line}"
+    fi
+  done < "${env_file}" > "${tmp}"
+  mv "${tmp}" "${env_file}"
+  chmod 600 "${env_file}"
+  if [[ "${replaced}" -eq 1 ]]; then
+    log "migrated ${env_file}: appended --advertise-exit-node to TS_EXTRA_ARGS"
+  fi
+}
+
 main() {
   if ! docker info >/dev/null 2>&1; then
     log "docker unavailable; skipping update"
@@ -74,7 +119,9 @@ main() {
   sync_repo
   reload_systemd_units
   ensure_ip_forwarding
+  migrate_env_exit_node
   apply_container_update
+  apply_extra_args
   log "update complete"
 }
 

@@ -86,6 +86,44 @@ make_scripts_executable() {
   chmod +x "${INSTALL_DIR}/scripts/"*.sh
 }
 
+# Existing installs may pin TS_EXTRA_ARGS without --advertise-exit-node. Compose
+# defaults still win for the container env, but keep the host env file consistent
+# so operators reading /etc/remote-tools/env see the exit-node flag.
+migrate_env_exit_node() {
+  if [[ ! -f "${ENV_FILE}" ]]; then
+    return 0
+  fi
+
+  if grep -qE '^TS_EXTRA_ARGS=.*--advertise-exit-node' "${ENV_FILE}"; then
+    return 0
+  fi
+
+  if ! grep -qE '^TS_EXTRA_ARGS=' "${ENV_FILE}"; then
+    return 0
+  fi
+
+  local tmp replaced=0 line current
+  tmp="$(mktemp)"
+  while IFS= read -r line || [[ -n "${line}" ]]; do
+    if [[ "${line}" == TS_EXTRA_ARGS=* && "${replaced}" -eq 0 ]]; then
+      current="${line#TS_EXTRA_ARGS=}"
+      if [[ "${current}" == *"--advertise-exit-node"* ]]; then
+        printf '%s\n' "${line}"
+      else
+        printf 'TS_EXTRA_ARGS=%s --advertise-exit-node\n' "${current}"
+      fi
+      replaced=1
+    else
+      printf '%s\n' "${line}"
+    fi
+  done < "${ENV_FILE}" > "${tmp}"
+  mv "${tmp}" "${ENV_FILE}"
+  chmod 600 "${ENV_FILE}"
+  if [[ "${replaced}" -eq 1 ]]; then
+    log "migrated ${ENV_FILE}: appended --advertise-exit-node to TS_EXTRA_ARGS"
+  fi
+}
+
 start_services() {
   systemctl start remote-tools-health.timer
   systemctl start remote-tools-update.timer
@@ -103,6 +141,7 @@ main() {
   install_packages
   clone_or_update_repo
   setup_env
+  migrate_env_exit_node
   ensure_ip_forwarding
   make_scripts_executable
   install_systemd_units

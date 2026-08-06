@@ -37,8 +37,14 @@ cp "${ROOT}/Dockerfile" "${TMP_DIR}/Dockerfile"
 
 echo "== build image =="
 if ! docker build -t remote-tools:startup-test "${ROOT}" >/tmp/remote-tools-startup-build.log 2>&1; then
-  tail -50 /tmp/remote-tools-startup-build.log >&2 || true
-  fail "docker build failed"
+  if grep -qiE 'buildx|BuildKit|overlay|invalid argument|mount' /tmp/remote-tools-startup-build.log \
+    && DOCKER_BUILDKIT=0 docker build -t remote-tools:startup-test "${ROOT}" \
+      >/tmp/remote-tools-startup-build.log 2>&1; then
+    :
+  else
+    tail -50 /tmp/remote-tools-startup-build.log >&2 || true
+    fail "docker build failed"
+  fi
 fi
 pass "docker build succeeded"
 
