@@ -1,3 +1,4 @@
 .env
 *.local
 config/env
+k8s/secret.env

@@ -1,0 +1,228 @@
+apiVersion: apps/v1
+kind: Deployment
+metadata:
+  name: remote-tools
+  namespace: remote-tools
+  labels:
+    app.kubernetes.io/name: remote-tools
+    app.kubernetes.io/part-of: remote-tools
+    app.kubernetes.io/component: tailscale
+spec:
+  replicas: 1
+  strategy:
+    type: Recreate
+  selector:
+    matchLabels:
+      app.kubernetes.io/name: remote-tools
+      app.kubernetes.io/component: tailscale
+  template:
+    metadata:
+      labels:
+        app.kubernetes.io/name: remote-tools
+        app.kubernetes.io/part-of: remote-tools
+        app.kubernetes.io/component: tailscale
+    spec:
+      serviceAccountName: remote-tools
+      hostNetwork: true
+      dnsPolicy: ClusterFirstWithHostNet
+      # Pin to a dedicated node with: kubectl label node <name> remote-tools/exit-node=true
+      nodeSelector:
+        remote-tools/exit-node: "true"
+      tolerations:
+        - operator: Exists
+      initContainers:
+        - name: exit-node-networking
+          image: alpine:3.21
+          imagePullPolicy: IfNotPresent
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              apk add --no-cache bash iptables ip6tables iproute2 procps >/dev/null
+              LOG_TAG=remote-tools-init bash /scripts/ensure-exit-node-networking.sh
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: sysctl-d
+              mountPath: /etc/sysctl.d
+      containers:
+        - name: tailscale
+          image: ghcr.io/brianlechthaler/remote-tools:latest
+          imagePullPolicy: Always
+          env:
+            - name: TS_AUTHKEY
+              valueFrom:
+                secretKeyRef:
+                  name: remote-tools-auth
+                  key: TS_AUTHKEY
+            - name: TS_HOSTNAME
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_HOSTNAME
+                  optional: true
+            - name: TS_EXTRA_ARGS
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_EXTRA_ARGS
+            - name: TS_USERSPACE
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_USERSPACE
+            - name: TS_AUTH_ONCE
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_AUTH_ONCE
+            - name: TS_STATE_DIR
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_STATE_DIR
+            - name: TS_ENABLE_HEALTH_CHECK
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_ENABLE_HEALTH_CHECK
+            - name: TS_LOCAL_ADDR_PORT
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_LOCAL_ADDR_PORT
+            - name: POD_NODE_NAME
+              valueFrom:
+                fieldRef:
+                  fieldPath: spec.nodeName
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              if [ -z "${TS_HOSTNAME:-}" ]; then
+                export TS_HOSTNAME="${POD_NODE_NAME}"
+              fi
+              exec /usr/local/bin/containerboot
+          securityContext:
+            capabilities:
+              add:
+                - NET_ADMIN
+                - NET_RAW
+                - SYS_MODULE
+          volumeMounts:
+            - name: tun
+              mountPath: /dev/net/tun
+            - name: state
+              mountPath: /var/lib/tailscale
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+          lifecycle:
+            postStart:
+              exec:
+                command:
+                  - /bin/sh
+                  - -c
+                  - |
+                    MAX_ATTEMPTS=5 RETRY_DELAY=2 LOG_TAG=remote-tools-poststart \
+                      /scripts/apply-ts-extra-args-local.sh || true
+          startupProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -x tailscaled >/dev/null 2>&1 || pgrep tailscaled >/dev/null 2>&1
+            initialDelaySeconds: 5
+            periodSeconds: 5
+            failureThreshold: 36
+            timeoutSeconds: 3
+          livenessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -x tailscaled >/dev/null 2>&1 || pgrep tailscaled >/dev/null 2>&1
+            initialDelaySeconds: 30
+            periodSeconds: 60
+            failureThreshold: 3
+            timeoutSeconds: 10
+          readinessProbe:
+            exec:
+              command:
+                - /bin/sh
+                - -c
+                - pgrep -x tailscaled >/dev/null 2>&1 || pgrep tailscaled >/dev/null 2>&1
+            initialDelaySeconds: 5
+            periodSeconds: 10
+            failureThreshold: 6
+            timeoutSeconds: 5
+          resources:
+            requests:
+              cpu: 50m
+              memory: 128Mi
+            limits:
+              memory: 512Mi
+        - name: watchdog
+          image: alpine:3.21
+          imagePullPolicy: IfNotPresent
+          env:
+            - name: WATCHDOG_INTERVAL_SECONDS
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: WATCHDOG_INTERVAL_SECONDS
+          command:
+            - /bin/sh
+            - -c
+            - |
+              set -euo pipefail
+              apk add --no-cache bash iptables ip6tables iproute2 procps curl >/dev/null
+              INTERVAL="${WATCHDOG_INTERVAL_SECONDS:-300}"
+              echo "[$(date -Is)] watchdog starting (interval=${INTERVAL}s)"
+              while true; do
+                LOG_TAG=remote-tools-watchdog bash /scripts/ensure-exit-node-networking.sh || true
+                if curl -fsS "http://127.0.0.1:9002/healthz" >/dev/null 2>&1; then
+                  echo "[$(date -Is)] healthz ok"
+                else
+                  echo "[$(date -Is)] WARNING: healthz not ok yet"
+                fi
+                sleep "${INTERVAL}"
+              done
+          securityContext:
+            privileged: true
+          volumeMounts:
+            - name: scripts
+              mountPath: /scripts
+              readOnly: true
+            - name: sysctl-d
+              mountPath: /etc/sysctl.d
+          resources:
+            requests:
+              cpu: 10m
+              memory: 32Mi
+            limits:
+              memory: 128Mi
+      volumes:
+        - name: tun
+          hostPath:
+            path: /dev/net/tun
+            type: CharDevice
+        - name: state
+          hostPath:
+            path: /var/lib/remote-tools/tailscale
+            type: DirectoryOrCreate
+        - name: sysctl-d
+          hostPath:
+            path: /etc/sysctl.d
+            type: DirectoryOrCreate
+        - name: scripts
+          configMap:
+            name: remote-tools-scripts
+            defaultMode: 0755
+      restartPolicy: Always
+      terminationGracePeriodSeconds: 30

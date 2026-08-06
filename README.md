@@ -1,26 +1,27 @@
 # Remote Tools
 
-Unattended Tailscale remote access for a Linux host, running in Docker with layered redundancy and automatic updates from GitHub.
+Unattended Tailscale remote access for a Linux host, running in Docker (systemd) or Kubernetes with layered redundancy and automatic updates from GitHub.
 
 ## What it does
 
-- Runs [Tailscale](https://tailscale.com/) in a Docker container with **host networking** so you can SSH to this machine over your tailnet
+- Runs [Tailscale](https://tailscale.com/) with **host networking** so you can SSH to this machine (or cluster node) over your tailnet
 - Advertises itself as a Tailscale **exit node** so other devices can route internet traffic through this host
-- Starts automatically on boot via **systemd**
-- **Health watchdog** checks every 5 minutes and restarts if the container or tailnet connection fails
-- **Auto-updater** pulls the latest config from `main` and the latest container from GHCR every 6 hours
+- Starts automatically on boot via **systemd** or a Kubernetes **DaemonSet** / **Deployment**
+- **Health watchdog** checks every 5 minutes and restarts if the container/pod or tailnet connection fails
+- **Auto-updater** pulls the latest config/image every 6 hours (git + GHCR on hosts; CronJob rollout restart on Kubernetes)
 - Container image is built and published to **GHCR** on every push to `main`
+- Full **Kubernetes** packaging (manifests, install/health/update scripts, kind CI) — see [docs/kubernetes.md](docs/kubernetes.md)
 
 ## Redundancy layers
 
-| Layer | Mechanism |
-|-------|-----------|
-| Docker | `restart: unless-stopped` |
-| systemd | `remote-tools.service` retries on failure |
-| Watchdog | `remote-tools-health.timer` every 5 min |
-| Rate limit | Health restarts capped at 6/hour to avoid restart loops |
-| State | Persistent Docker volume keeps the same Tailscale node identity |
-| Updates | Periodic pull from GitHub + GHCR keeps the host current |
+| Layer | Docker / systemd | Kubernetes |
+|-------|------------------|------------|
+| Runtime restart | `restart: unless-stopped` | kubelet restarts + probes |
+| Supervisor | `remote-tools.service` | DaemonSet / Deployment |
+| Watchdog | `remote-tools-health.timer` (5 min) | CronJob + networking sidecar |
+| Rate limit | 6 restarts / hour | same (`k8s-healthcheck.sh`) |
+| State | Docker volume | hostPath `/var/lib/remote-tools/tailscale` |
+| Updates | git pull + `docker pull` every 6h | CronJob `rollout restart` + `imagePullPolicy: Always` |
 
 ## Quick install
 
@@ -87,6 +88,25 @@ sudo BRANCH=cursor/some-fix-branch /opt/remote-tools/scripts/update.sh
 sudo /opt/remote-tools/scripts/healthcheck.sh
 ```
 
+## Kubernetes
+
+```bash
+cp k8s/secret.env.example k8s/secret.env
+# set TS_AUTHKEY=tskey-auth-...
+./scripts/k8s-install.sh --overlay daemonset
+```
+
+Overlays:
+
+- `k8s/overlays/daemonset` — one Tailscale pod per node (default)
+- `k8s/overlays/single-node` — Deployment pinned to `remote-tools/exit-node=true`
+
+See **[docs/kubernetes.md](docs/kubernetes.md)** for feature parity, configuration, operations, RBAC, and testing.
+
+```bash
+./scripts/test-k8s.sh          # static checks + kind integration
+```
+
 ## Container image
 
 Published to:
@@ -95,15 +115,27 @@ Published to:
 ghcr.io/brianlechthaler/remote-tools:latest
 ```
 
-Built from `tailscale/tailscale:v1.98.10` with health-check defaults enabled. Pushes to `main` trigger the [build workflow](.github/workflows/build-and-publish.yml).
+Built from `tailscale/tailscale:v1.98.10` with health-check defaults enabled and an in-container `apply-ts-extra-args-local.sh` for Kubernetes. Pushes to `main` trigger the [build workflow](.github/workflows/build-and-publish.yml).
 
 ## Development
 
-Edit files in this repo and push to `main`. Within ~6 hours (or immediately via `update.sh`), installed hosts will:
+Edit files in this repo and push to `main`. Within ~6 hours (or immediately via `update.sh` / `k8s-update.sh`), installs will refresh:
+
+**Docker hosts**
 
 1. `git pull` the latest scripts, compose file, and systemd units
 2. `docker pull` the latest GHCR image
 3. Recreate the container if the image changed
+
+**Kubernetes**
+
+1. Re-apply manifests (`./scripts/k8s-install.sh` or `kubectl apply -k …`) when YAML/scripts change
+2. The update CronJob rolls the workload every 6 hours so nodes pull `:latest`
+
+CI:
+
+- [`.github/workflows/test.yml`](.github/workflows/test.yml) — Docker compose startup
+- [`.github/workflows/test-k8s.yml`](.github/workflows/test-k8s.yml) — Kubernetes manifests + kind
 
 ## License
 
