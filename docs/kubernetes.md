@@ -177,3 +177,8 @@ kubectl delete -k k8s/overlays/daemonset
 ```
 
 Node hostPath state (Tailscale identity) remains under `/var/lib/remote-tools/tailscale` until removed manually.
+
+
+## CI notes
+
+The [Test Kubernetes](../.github/workflows/test-k8s.yml) workflow requires GitHub-hosted runners and sets `CLUSTER_PROVIDER=kind`. Re-run the workflow from the Actions tab if a run fails with a runner-acquisition error before tests start.
