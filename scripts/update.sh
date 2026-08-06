@@ -1,10 +1,13 @@
 #!/usr/bin/env bash
-# Pull latest repo config and container image from main, then apply changes.
+# Pull latest repo config and container image, then apply changes.
+# Default branch is main. Override to test a PR branch, e.g.:
+#   sudo BRANCH=cursor/fix-exit-node-nat-74ee /opt/remote-tools/scripts/update.sh
 set -euo pipefail
 
 INSTALL_DIR="${INSTALL_DIR:-/opt/remote-tools}"
 COMPOSE_FILE="${INSTALL_DIR}/docker-compose.yml"
 IMAGE="ghcr.io/brianlechthaler/remote-tools:latest"
+BRANCH="${BRANCH:-main}"
 LOG_TAG="remote-tools-update"
 
 log() {
@@ -35,9 +38,9 @@ reload_systemd_units() {
 
 sync_repo() {
   if [[ -d "${INSTALL_DIR}/.git" ]]; then
-    log "pulling latest remote-tools from main"
-    git -C "${INSTALL_DIR}" fetch origin main
-    git -C "${INSTALL_DIR}" reset --hard origin/main
+    log "pulling latest remote-tools from ${BRANCH}"
+    git -C "${INSTALL_DIR}" fetch origin "${BRANCH}"
+    git -C "${INSTALL_DIR}" reset --hard "origin/${BRANCH}"
   else
     log "ERROR: ${INSTALL_DIR} is not a git checkout"
     exit 1

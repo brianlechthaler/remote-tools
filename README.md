@@ -77,8 +77,11 @@ docker logs -f remote-tools-tailscale
 # Tailscale status
 docker exec remote-tools-tailscale tailscale status
 
-# Manual update (same as the timer)
+# Manual update (same as the timer; tracks main)
 sudo /opt/remote-tools/scripts/update.sh
+
+# Optional: install/test a PR branch before it lands on main
+sudo BRANCH=cursor/some-fix-branch /opt/remote-tools/scripts/update.sh
 
 # Manual health check
 sudo /opt/remote-tools/scripts/healthcheck.sh

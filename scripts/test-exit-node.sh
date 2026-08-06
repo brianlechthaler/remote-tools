@@ -366,6 +366,73 @@ expect_eq "${after}" "${before}" "migration is idempotent when exit-node already
 rm -f "${MIG_ENV2}"
 
 echo
+echo "== prefs detection (AdvertiseRoutes, not AdvertiseExitNode) =="
+
+# Isolate the prefs helpers from apply-ts-extra-args.sh for unit testing.
+# shellcheck disable=SC1091
+eval "$(sed -n '/^prefs_python()/,/^prefs_already_applied()/p' "${ROOT}/scripts/apply-ts-extra-args.sh" \
+  | sed '$d')"
+
+SAMPLE_OK='{
+	"RouteAll": true,
+	"NoSNAT": false,
+	"AdvertiseRoutes": [
+		"0.0.0.0/0",
+		"::/0"
+	]
+}'
+SAMPLE_NO_EXIT='{
+	"RouteAll": true,
+	"NoSNAT": false,
+	"AdvertiseRoutes": [
+		"192.168.1.0/24"
+	]
+}'
+SAMPLE_OLD_BUG='{
+	"RouteAll": true,
+	"AdvertiseRoutes": [
+		"0.0.0.0/0",
+		"::/0"
+	]
+}'
+
+if prefs_advertise_exit_node "${SAMPLE_OK}"; then
+  pass "prefs_advertise_exit_node accepts AdvertiseRoutes defaults"
+else
+  fail "prefs_advertise_exit_node accepts AdvertiseRoutes defaults"
+fi
+if prefs_advertise_exit_node "${SAMPLE_NO_EXIT}"; then
+  fail "prefs_advertise_exit_node rejects subnet-only routes"
+else
+  pass "prefs_advertise_exit_node rejects subnet-only routes"
+fi
+# The PR #4 bug: looking for AdvertiseExitNode would fail this sample even though
+# exit routes are present. Our check must pass.
+if prefs_advertise_exit_node "${SAMPLE_OLD_BUG}"; then
+  pass "prefs check does not require fictional AdvertiseExitNode field"
+else
+  fail "prefs check does not require fictional AdvertiseExitNode field"
+fi
+if prefs_accept_routes "${SAMPLE_OK}"; then
+  pass "prefs_accept_routes detects RouteAll=true"
+else
+  fail "prefs_accept_routes detects RouteAll=true"
+fi
+if prefs_nosnat "${SAMPLE_OK}"; then
+  fail "prefs_nosnat false when NoSNAT=false"
+else
+  pass "prefs_nosnat false when NoSNAT=false"
+fi
+
+# Intentionally match literal ${BRANCH} text in update.sh (not expand it here).
+# shellcheck disable=SC2016
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" 'BRANCH="${BRANCH:-main}"' \
+  "update.sh supports BRANCH override"
+# shellcheck disable=SC2016
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" 'origin/${BRANCH}' \
+  "update.sh fetches origin/\$BRANCH"
+
+echo
 echo "== apply-ts-extra-args.sh dry behavior =="
 
 # Without a running container, the helper should no-op successfully.

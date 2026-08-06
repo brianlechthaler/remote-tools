@@ -10,6 +10,11 @@
 # `tailscale set --advertise-exit-node` so the control plane and local NAT path
 # pick up the advertised default routes.
 #
+# Note: `AdvertiseExitNode` is NOT a field in `tailscale debug prefs` JSON.
+# Exit-node mode is represented by AdvertiseRoutes containing 0.0.0.0/0 and ::/0.
+# Checking for a fictional AdvertiseExitNode field causes a false "failed to apply"
+# warning even when set succeeded (the bug users hit on main after PR #4).
+#
 # Invoked by start.sh / update.sh / healthcheck.sh after the stack is up.
 set -euo pipefail
 
@@ -37,24 +42,40 @@ prefs_json() {
   docker exec "${CONTAINER}" tailscale debug prefs 2>/dev/null || true
 }
 
-# AdvertiseExitNode is a method, not a prefs JSON field. Exit-node mode is
-# represented by advertising both default routes in AdvertiseRoutes.
+# Parse prefs with python3 when available (reliable JSON). Bash fallback otherwise.
+prefs_python() {
+  local prefs="$1"
+  local expression="$2"
+  command -v python3 >/dev/null || return 2
+  PREFS_JSON="${prefs}" python3 -c "
+import json, os, sys
+p = json.loads(os.environ['PREFS_JSON'])
+${expression}
+" 2>/dev/null
+}
+
 prefs_advertise_exit_node() {
   local prefs="$1"
   [[ -n "${prefs}" ]] || return 1
-  if grep -qE '"AdvertiseRoutes"[[:space:]]*:[[:space:]]*\[[^]]*"0\.0\.0\.0/0"' <<<"${prefs}" \
-    && grep -qE '"AdvertiseRoutes"[[:space:]]*:[[:space:]]*\[[^]]*"(::/0|0::/0)"' <<<"${prefs}"; then
+
+  local rc=0
+  if prefs_python "${prefs}" '
+routes = [str(r) for r in (p.get("AdvertiseRoutes") or [])]
+sys.exit(0 if ("0.0.0.0/0" in routes and "::/0" in routes) else 1)
+'; then
     return 0
-  fi
-  # Multiline AdvertiseRoutes arrays: check membership separately.
-  if grep -qE '"0\.0\.0\.0/0"' <<<"${prefs}" && grep -qE '"(::/0|0::/0)"' <<<"${prefs}"; then
-    # Avoid false positives from unrelated fields by requiring AdvertiseRoutes nearby.
-    if grep -q '"AdvertiseRoutes"' <<<"${prefs}"; then
-      return 0
+  else
+    rc=$?
+    # rc=2 means python unavailable; fall through. rc=1 means check failed.
+    if [[ "${rc}" -eq 1 ]]; then
+      return 1
     fi
   fi
-  # Last-resort substring used by older debug output.
-  if grep -qE 'AdvertiseExitNode.*true|"AdvertiseExitNode"[[:space:]]*:[[:space:]]*true' <<<"${prefs}"; then
+
+  # Bash fallback for multiline JSON from `tailscale debug prefs`.
+  if grep -qE '"0\.0\.0\.0/0"' <<<"${prefs}" \
+    && grep -qE '"(::/0)"' <<<"${prefs}" \
+    && grep -q '"AdvertiseRoutes"' <<<"${prefs}"; then
     return 0
   fi
   return 1
@@ -63,10 +84,55 @@ prefs_advertise_exit_node() {
 prefs_accept_routes() {
   local prefs="$1"
   [[ -n "${prefs}" ]] || return 1
+
+  local rc=0
+  if prefs_python "${prefs}" 'sys.exit(0 if p.get("RouteAll") is True else 1)'; then
+    return 0
+  else
+    rc=$?
+    if [[ "${rc}" -eq 1 ]]; then
+      return 1
+    fi
+  fi
+
   if grep -qE '"RouteAll"[[:space:]]*:[[:space:]]*true' <<<"${prefs}"; then
     return 0
   fi
-  grep -q 'RouteAll.*true' <<<"${prefs}"
+  return 1
+}
+
+prefs_nosnat() {
+  local prefs="$1"
+  [[ -n "${prefs}" ]] || return 1
+  if prefs_python "${prefs}" 'sys.exit(0 if p.get("NoSNAT") is True else 1)'; then
+    return 0
+  else
+    local rc=$?
+    if [[ "${rc}" -eq 1 ]]; then
+      return 1
+    fi
+  fi
+  grep -qE '"NoSNAT"[[:space:]]*:[[:space:]]*true' <<<"${prefs}"
+}
+
+prefs_summary() {
+  local prefs="$1"
+  if [[ -z "${prefs}" ]]; then
+    printf 'prefs=<empty>'
+    return 0
+  fi
+  if command -v python3 >/dev/null; then
+    PREFS_JSON="${prefs}" python3 -c '
+import json, os
+p = json.loads(os.environ["PREFS_JSON"])
+routes = [str(r) for r in (p.get("AdvertiseRoutes") or [])]
+print(
+  "AdvertiseRoutes=%s RouteAll=%s NoSNAT=%s"
+  % (routes, p.get("RouteAll"), p.get("NoSNAT"))
+)
+' 2>/dev/null && return 0
+  fi
+  printf 'AdvertiseRoutes/RouteAll parse unavailable'
 }
 
 # Return 0 if prefs already match the bits we care about from ExtraArgs.
@@ -117,6 +183,12 @@ warn_if_exit_node_unapproved() {
   local extra_args="$1"
   [[ "${extra_args}" == *"--advertise-exit-node"* ]] || return 0
 
+  local prefs
+  prefs="$(prefs_json)"
+  if prefs_nosnat "${prefs}"; then
+    log "WARNING: NoSNAT=true with exit node advertising; internet via this exit node may blackhole. Prefer default --snat-subnet-routes"
+  fi
+
   local status
   status="$(docker exec "${CONTAINER}" tailscale status --json 2>/dev/null || true)"
   [[ -n "${status}" ]] || return 0
@@ -127,7 +199,7 @@ warn_if_exit_node_unapproved() {
     return 0
   fi
 
-  if prefs_advertise_exit_node "$(prefs_json)"; then
+  if prefs_advertise_exit_node "${prefs}"; then
     log "WARNING: advertising exit node, but it is not approved yet — approve in admin console: Machines → … → Edit route settings → Use as exit node"
   fi
 }
@@ -156,7 +228,7 @@ main() {
     exit 0
   fi
 
-  local attempt
+  local attempt prefs
   for attempt in $(seq 1 "${MAX_ATTEMPTS}"); do
     if apply_once "${extra_args}" >/dev/null 2>&1; then
       if prefs_already_applied "${extra_args}"; then
@@ -164,15 +236,16 @@ main() {
         warn_if_exit_node_unapproved "${extra_args}"
         exit 0
       fi
-      # set/up succeeded but prefs not yet reflecting (rare); keep trying briefly
-      log "tailscale set/up returned ok; waiting for prefs to reflect (${attempt}/${MAX_ATTEMPTS})"
+      prefs="$(prefs_json)"
+      log "tailscale set/up returned ok; waiting for prefs to reflect (${attempt}/${MAX_ATTEMPTS}): $(prefs_summary "${prefs}")"
     else
       log "tailscale set/up not ready yet (${attempt}/${MAX_ATTEMPTS})"
     fi
     sleep "${RETRY_DELAY}"
   done
 
-  log "WARNING: failed to apply TS_EXTRA_ARGS via tailscale set/up after ${MAX_ATTEMPTS} attempts: ${extra_args}"
+  prefs="$(prefs_json)"
+  log "WARNING: failed to apply TS_EXTRA_ARGS via tailscale set/up after ${MAX_ATTEMPTS} attempts: ${extra_args} ($(prefs_summary "${prefs}"))"
   exit 0
 }
 
