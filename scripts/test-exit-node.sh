@@ -81,18 +81,29 @@ readme="$(cat "${ROOT}/README.md")"
 expect_contains "${readme}" "exit node" "README documents exit node"
 expect_contains "${readme}" "advertise-exit-node" "README mentions --advertise-exit-node"
 expect_contains "${readme}" "Use as exit node" "README documents admin approval"
+expect_contains "${readme}" "MASQUERADE" "README documents NAT/MASQUERADE path"
+expect_contains "${readme}" "rp_filter" "README documents rp_filter hardening"
 
 env_example="$(cat "${ROOT}/config/env.example")"
 expect_contains "${env_example}" "--advertise-exit-node" "env.example mentions advertise-exit-node"
 expect_contains "${env_example}" "Use as exit node" "env.example documents admin approval"
 
-for script in start.sh update.sh install.sh; do
+for script in start.sh update.sh install.sh healthcheck.sh; do
   body="$(cat "${ROOT}/scripts/${script}")"
-  expect_contains "${body}" "ensure_ip_forwarding" "${script} defines/calls ensure_ip_forwarding"
-  expect_contains "${body}" "net.ipv4.ip_forward = 1" "${script} enables IPv4 forwarding"
-  expect_contains "${body}" "net.ipv6.conf.all.forwarding = 1" "${script} enables IPv6 forwarding"
-  expect_contains "${body}" "99-remote-tools-tailscale.conf" "${script} writes persistent sysctl conf"
+  expect_contains "${body}" "ensure-exit-node-networking.sh" \
+    "${script} calls ensure-exit-node-networking.sh"
 done
+
+net_script="$(cat "${ROOT}/scripts/ensure-exit-node-networking.sh")"
+expect_contains "${net_script}" "net.ipv4.ip_forward = 1" "networking script enables IPv4 forwarding"
+expect_contains "${net_script}" "net.ipv6.conf.all.forwarding = 1" "networking script enables IPv6 forwarding"
+expect_contains "${net_script}" "net.ipv4.conf.all.rp_filter = 2" "networking script sets loose rp_filter"
+expect_contains "${net_script}" "net.ipv4.conf.all.src_valid_mark = 1" "networking script sets src_valid_mark"
+expect_contains "${net_script}" "99-remote-tools-tailscale.conf" "networking script writes persistent sysctl conf"
+expect_contains "${net_script}" "100.64.0.0/10" "networking script MASQUERADEs Tailscale CGNAT"
+expect_contains "${net_script}" "MASQUERADE" "networking script configures MASQUERADE"
+expect_contains "${net_script}" "firewall-cmd" "networking script handles firewalld"
+expect_contains "${net_script}" "ufw route allow" "networking script handles ufw routed traffic"
 
 expect_contains "$(cat "${ROOT}/scripts/start.sh")" "apply-ts-extra-args.sh" \
   "start.sh re-applies TS_EXTRA_ARGS after stack start"
@@ -102,23 +113,16 @@ expect_contains "$(cat "${ROOT}/scripts/healthcheck.sh")" "apply-ts-extra-args.s
   "healthcheck.sh re-applies TS_EXTRA_ARGS when healthy"
 expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "tailscale set" \
   "apply-ts-extra-args.sh uses tailscale set"
-expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "AdvertiseExitNode" \
-  "apply-ts-extra-args.sh checks AdvertiseExitNode prefs"
+expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "tailscale up" \
+  "apply-ts-extra-args.sh runs tailscale up after set"
+expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "AdvertiseRoutes" \
+  "apply-ts-extra-args.sh checks AdvertiseRoutes for exit-node prefs"
+expect_contains "$(cat "${ROOT}/scripts/apply-ts-extra-args.sh")" "ExitNodeOption" \
+  "apply-ts-extra-args.sh warns when exit node is unapproved"
 expect_contains "$(cat "${ROOT}/scripts/install.sh")" "migrate_env_exit_node" \
   "install.sh migrates env files missing exit-node flag"
 expect_contains "$(cat "${ROOT}/scripts/update.sh")" "migrate_env_exit_node" \
   "update.sh migrates env files missing exit-node flag"
-
-# Keep the three sysctl heredoc payloads identical to avoid drift.
-extract_sysctl_block() {
-  awk '/^net\.ipv4\.ip_forward = 1$/,/^net\.ipv6\.conf\.all\.forwarding = 1$/' "$1"
-}
-
-start_block="$(extract_sysctl_block "${ROOT}/scripts/start.sh")"
-update_block="$(extract_sysctl_block "${ROOT}/scripts/update.sh")"
-install_block="$(extract_sysctl_block "${ROOT}/scripts/install.sh")"
-expect_eq "${start_block}" "${update_block}" "start.sh and update.sh sysctl blocks match"
-expect_eq "${start_block}" "${install_block}" "start.sh and install.sh sysctl blocks match"
 
 echo
 echo "== docker compose render =="
@@ -164,7 +168,7 @@ else
 fi
 
 echo
-echo "== host IP forwarding (live) =="
+echo "== host exit-node networking (live) =="
 
 CONF="/etc/sysctl.d/99-remote-tools-tailscale.conf"
 BACKUP=""
@@ -173,23 +177,51 @@ if [[ -f "${CONF}" ]]; then
   cp "${CONF}" "${BACKUP}"
 fi
 
-# Exercise the same logic start.sh uses, without requiring full start.
-sudo tee "${CONF}" >/dev/null <<'EOF'
-# Required for Tailscale exit node mode (managed by remote-tools)
-net.ipv4.ip_forward = 1
-net.ipv6.conf.all.forwarding = 1
-EOF
-
-if sudo sysctl -p "${CONF}" >/dev/null; then
-  pass "sysctl -p applies exit-node forwarding conf"
+net_out=""
+if net_out="$(sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" 2>&1)"; then
+  pass "ensure-exit-node-networking.sh exits 0"
+  printf '%s\n' "${net_out}" > /tmp/remote-tools-networking.out
 else
-  fail "sysctl -p applies exit-node forwarding conf"
+  fail "ensure-exit-node-networking.sh exits 0"
+  printf '%s\n' "${net_out}" >&2 || true
 fi
 
 ipv4="$(sysctl -n net.ipv4.ip_forward)"
 ipv6="$(sysctl -n net.ipv6.conf.all.forwarding)"
+rp="$(sysctl -n net.ipv4.conf.all.rp_filter)"
 expect_eq "${ipv4}" "1" "net.ipv4.ip_forward is 1"
 expect_eq "${ipv6}" "1" "net.ipv6.conf.all.forwarding is 1"
+expect_eq "${rp}" "2" "net.ipv4.conf.all.rp_filter is 2"
+
+if [[ -f "${CONF}" ]] && grep -q 'net.ipv4.conf.all.rp_filter = 2' "${CONF}"; then
+  pass "sysctl conf persists rp_filter=2"
+else
+  fail "sysctl conf persists rp_filter=2"
+fi
+
+if command -v iptables >/dev/null; then
+  if sudo iptables -t nat -C POSTROUTING -s 100.64.0.0/10 ! -o tailscale0 -j MASQUERADE 2>/dev/null; then
+    pass "iptables CGNAT MASQUERADE fallback installed"
+  else
+    fail "iptables CGNAT MASQUERADE fallback installed"
+  fi
+  if sudo iptables -C FORWARD -i tailscale0 -j ACCEPT 2>/dev/null; then
+    pass "iptables FORWARD ACCEPT for tailscale0 installed"
+  else
+    fail "iptables FORWARD ACCEPT for tailscale0 installed"
+  fi
+  # Idempotency: second run must not fail or duplicate-error.
+  net_out2=""
+  if net_out2="$(sudo LOG_TAG=remote-tools-test bash "${ROOT}/scripts/ensure-exit-node-networking.sh" 2>&1)"; then
+    pass "ensure-exit-node-networking.sh is idempotent"
+    printf '%s\n' "${net_out2}" > /tmp/remote-tools-networking2.out
+  else
+    fail "ensure-exit-node-networking.sh is idempotent"
+    printf '%s\n' "${net_out2}" >&2 || true
+  fi
+else
+  fail "iptables not installed"
+fi
 
 if [[ -n "${BACKUP}" ]]; then
   sudo cp "${BACKUP}" "${CONF}"
@@ -332,6 +364,73 @@ migrate_env_exit_node_test "${MIG_ENV2}"
 after="$(cat "${MIG_ENV2}")"
 expect_eq "${after}" "${before}" "migration is idempotent when exit-node already present"
 rm -f "${MIG_ENV2}"
+
+echo
+echo "== prefs detection (AdvertiseRoutes, not AdvertiseExitNode) =="
+
+# Isolate the prefs helpers from apply-ts-extra-args.sh for unit testing.
+# shellcheck disable=SC1091
+eval "$(sed -n '/^prefs_python()/,/^prefs_already_applied()/p' "${ROOT}/scripts/apply-ts-extra-args.sh" \
+  | sed '$d')"
+
+SAMPLE_OK='{
+	"RouteAll": true,
+	"NoSNAT": false,
+	"AdvertiseRoutes": [
+		"0.0.0.0/0",
+		"::/0"
+	]
+}'
+SAMPLE_NO_EXIT='{
+	"RouteAll": true,
+	"NoSNAT": false,
+	"AdvertiseRoutes": [
+		"192.168.1.0/24"
+	]
+}'
+SAMPLE_OLD_BUG='{
+	"RouteAll": true,
+	"AdvertiseRoutes": [
+		"0.0.0.0/0",
+		"::/0"
+	]
+}'
+
+if prefs_advertise_exit_node "${SAMPLE_OK}"; then
+  pass "prefs_advertise_exit_node accepts AdvertiseRoutes defaults"
+else
+  fail "prefs_advertise_exit_node accepts AdvertiseRoutes defaults"
+fi
+if prefs_advertise_exit_node "${SAMPLE_NO_EXIT}"; then
+  fail "prefs_advertise_exit_node rejects subnet-only routes"
+else
+  pass "prefs_advertise_exit_node rejects subnet-only routes"
+fi
+# The PR #4 bug: looking for AdvertiseExitNode would fail this sample even though
+# exit routes are present. Our check must pass.
+if prefs_advertise_exit_node "${SAMPLE_OLD_BUG}"; then
+  pass "prefs check does not require fictional AdvertiseExitNode field"
+else
+  fail "prefs check does not require fictional AdvertiseExitNode field"
+fi
+if prefs_accept_routes "${SAMPLE_OK}"; then
+  pass "prefs_accept_routes detects RouteAll=true"
+else
+  fail "prefs_accept_routes detects RouteAll=true"
+fi
+if prefs_nosnat "${SAMPLE_OK}"; then
+  fail "prefs_nosnat false when NoSNAT=false"
+else
+  pass "prefs_nosnat false when NoSNAT=false"
+fi
+
+# Intentionally match literal ${BRANCH} text in update.sh (not expand it here).
+# shellcheck disable=SC2016
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" 'BRANCH="${BRANCH:-main}"' \
+  "update.sh supports BRANCH override"
+# shellcheck disable=SC2016
+expect_contains "$(cat "${ROOT}/scripts/update.sh")" 'origin/${BRANCH}' \
+  "update.sh fetches origin/\$BRANCH"
 
 echo
 echo "== apply-ts-extra-args.sh dry behavior =="

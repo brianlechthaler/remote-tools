@@ -85,6 +85,11 @@ main() {
       "${INSTALL_DIR}/scripts/apply-ts-extra-args.sh" || true
   fi
 
+  # Keep host forwarding/NAT/firewall path intact (UFW reloads, Docker iptables, etc.).
+  if [[ -x "${INSTALL_DIR}/scripts/ensure-exit-node-networking.sh" ]]; then
+    LOG_TAG="${LOG_TAG}" "${INSTALL_DIR}/scripts/ensure-exit-node-networking.sh" || true
+  fi
+
   log "healthy"
 }
 
