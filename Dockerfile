@@ -9,8 +9,8 @@ ENV TS_STATE_DIR=/var/lib/tailscale \
     TS_ENABLE_HEALTH_CHECK=true \
     TS_LOCAL_ADDR_PORT=127.0.0.1:9002
 
-# bash is required by apply-ts-extra-args-local.sh (and handy for kubectl exec debugging).
-RUN apk add --no-cache bash
+# bash + timeout(1) for apply-ts-extra-args-local.sh (bounds hung `tailscale` CLI calls).
+RUN apk add --no-cache bash coreutils
 
 # In-container helpers for Kubernetes postStart / kubectl exec watchdogs.
 # Host-side Docker installs continue to use scripts/ from the git checkout.

@@ -132,11 +132,27 @@ prefs_already_applied() {
 }
 
 run_ts() {
+  # Bound CLI calls so unauthenticated/dev nodes cannot hang watchdogs forever.
   if command -v timeout >/dev/null; then
     timeout 20 tailscale "$@"
-  else
-    tailscale "$@"
+    return $?
   fi
+
+  # Fallback when coreutils timeout is unavailable (should be rare in our image).
+  local pid
+  tailscale "$@" &
+  pid=$!
+  local i=0
+  while kill -0 "${pid}" 2>/dev/null; do
+    i=$((i + 1))
+    if [[ "${i}" -ge 20 ]]; then
+      kill "${pid}" 2>/dev/null || true
+      wait "${pid}" 2>/dev/null || true
+      return 124
+    fi
+    sleep 1
+  done
+  wait "${pid}"
 }
 
 apply_once() {

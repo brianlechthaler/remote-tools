@@ -163,6 +163,8 @@ CI runs the same script via [`.github/workflows/test-k8s.yml`](../.github/workfl
 
 The `remote-tools` ServiceAccount can list/get/delete pods, create pods/exec, and patch DaemonSets/Deployments in the `remote-tools` namespace — enough for the health and update CronJobs. It cannot mutate other namespaces.
 
+Tailscale workload pods set `automountServiceAccountToken: false` and `TS_KUBE_SECRET=""` so containerboot does **not** try to store node state in a Kubernetes Secret (identity stays on the node hostPath, matching Docker).
+
 ## Security notes
 
 - Pods use **host networking** and a **privileged** networking sidecar/init container. Treat the namespace as sensitive; restrict who can edit its ConfigMaps/Secrets.

@@ -122,6 +122,9 @@ for overlay in daemonset single-node; do
   expect_contains "${body}" "remote-tools-health" "overlays/${overlay} includes health CronJob"
   expect_contains "${body}" "remote-tools-update" "overlays/${overlay} includes update CronJob"
   expect_contains "${body}" "TS_USERSPACE" "overlays/${overlay} configures TS_USERSPACE"
+  expect_contains "${body}" "TS_KUBE_SECRET" "overlays/${overlay} disables kube Secret state"
+  expect_contains "${body}" "automountServiceAccountToken: false" \
+    "overlays/${overlay} does not mount SA token into Tailscale pods"
   expect_contains "${body}" "kind: Namespace" "overlays/${overlay} creates namespace"
 
   if command -v kubeconform >/dev/null; then
@@ -587,8 +590,10 @@ run_kind_integration() {
       fail "scripts mounted into tailscale container"
     fi
 
+    # Bound the exec: without timeout(1) a hung `tailscale set` used to get SIGKILL (137).
     if kubectl -n "${NAMESPACE}" exec "${pod}" -c tailscale -- \
-      /bin/sh -c 'MAX_ATTEMPTS=2 RETRY_DELAY=1 /scripts/apply-ts-extra-args-local.sh' \
+      /bin/sh -c 'command -v timeout >/dev/null && command -v bash >/dev/null && \
+        MAX_ATTEMPTS=2 RETRY_DELAY=1 /scripts/apply-ts-extra-args-local.sh' \
       >/tmp/remote-tools-k8s-apply.out 2>&1
     then
       pass "apply-ts-extra-args-local.sh exits 0 in pod"
