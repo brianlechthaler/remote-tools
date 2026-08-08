@@ -590,15 +590,23 @@ run_kind_integration() {
       fail "scripts mounted into tailscale container"
     fi
 
-    # Bound the exec: without timeout(1) a hung `tailscale set` used to get SIGKILL (137).
+    # Smoke-test the helper without calling `tailscale set` (fake auth keys hang /
+    # get SIGKILL'd under kubectl exec). Empty ExtraArgs makes the script no-op.
     if kubectl -n "${NAMESPACE}" exec "${pod}" -c tailscale -- \
       /bin/sh -c 'command -v timeout >/dev/null && command -v bash >/dev/null && \
-        MAX_ATTEMPTS=2 RETRY_DELAY=1 /scripts/apply-ts-extra-args-local.sh' \
+        test -x /scripts/apply-ts-extra-args-local.sh && \
+        TS_EXTRA_ARGS= MAX_ATTEMPTS=1 /scripts/apply-ts-extra-args-local.sh' \
       >/tmp/remote-tools-k8s-apply.out 2>&1
     then
-      pass "apply-ts-extra-args-local.sh exits 0 in pod"
+      pass "apply-ts-extra-args-local.sh exits 0 in pod (no-op smoke)"
+      if grep -q 'TS_EXTRA_ARGS empty' /tmp/remote-tools-k8s-apply.out; then
+        pass "apply helper reported empty ExtraArgs no-op"
+      else
+        fail "apply helper reported empty ExtraArgs no-op"
+        cat /tmp/remote-tools-k8s-apply.out >&2 || true
+      fi
     else
-      fail "apply-ts-extra-args-local.sh exits 0 in pod"
+      fail "apply-ts-extra-args-local.sh exits 0 in pod (no-op smoke)"
       cat /tmp/remote-tools-k8s-apply.out >&2 || true
     fi
 
