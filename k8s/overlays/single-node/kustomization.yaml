@@ -1,0 +1,22 @@
+apiVersion: kustomize.config.k8s.io/v1beta1
+kind: Kustomization
+
+resources:
+  - ../../base
+  - deployment.yaml
+
+# Single-node exit-node overlay: replace the DaemonSet with a Deployment pinned
+# to nodes labeled remote-tools/exit-node=true.
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: remote-tools
+    patch: |-
+      apiVersion: apps/v1
+      kind: DaemonSet
+      metadata:
+        name: remote-tools
+        namespace: remote-tools
+      $patch: delete

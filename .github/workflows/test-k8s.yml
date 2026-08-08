@@ -1,7 +1,9 @@
-name: Test
+name: Test Kubernetes
 
 on:
   pull_request:
+    branches: [main]
+  push:
     branches: [main]
   workflow_dispatch:
 
@@ -9,15 +11,6 @@ permissions:
   contents: read
 
 jobs:
-  tailscale-startup:
-    runs-on: ubuntu-latest
-    steps:
-      - name: Checkout
-        uses: actions/checkout@v4
-
-      - name: Run Tailscale startup test
-        run: bash scripts/test-tailscale-startup.sh
-
   k8s-integration:
     runs-on: ubuntu-latest
     timeout-minutes: 30
@@ -29,18 +22,28 @@ jobs:
         run: |
           curl -fsSL "https://github.com/kubernetes-sigs/kustomize/releases/download/kustomize%2Fv5.6.0/kustomize_v5.6.0_linux_amd64.tar.gz" \
             | sudo tar -xz -C /usr/local/bin kustomize
+          kustomize version
 
       - name: Install kubeconform
         run: |
           curl -fsSL -o /tmp/kubeconform.tar.gz \
             https://github.com/yannh/kubeconform/releases/download/v0.6.7/kubeconform-linux-amd64.tar.gz
           sudo tar -xzf /tmp/kubeconform.tar.gz -C /usr/local/bin kubeconform
+          kubeconform -v
 
       - name: Install kind
         run: |
           curl -fsSL -o /tmp/kind \
             "https://kind.sigs.k8s.io/dl/v0.27.0/kind-linux-amd64"
           sudo install -m 0755 /tmp/kind /usr/local/bin/kind
+          kind version
+
+      - name: Install kwokctl (fallback when kind cannot boot)
+        run: |
+          curl -fsSL -o /tmp/kwokctl \
+            "https://github.com/kubernetes-sigs/kwok/releases/download/v0.6.1/kwokctl-linux-amd64"
+          sudo install -m 0755 /tmp/kwokctl /usr/local/bin/kwokctl
+          kwokctl --version
 
       - name: Install shellcheck
         run: sudo apt-get update -qq && sudo apt-get install -y shellcheck
@@ -48,19 +51,5 @@ jobs:
       - name: Run Kubernetes tests
         run: bash scripts/test-k8s.sh
         env:
+          # Prefer kind on GitHub-hosted runners; fail closed if it cannot start.
           CLUSTER_PROVIDER: kind
-
-  automerge:
-    needs: [tailscale-startup, k8s-integration]
-    if: >-
-      github.event_name == 'pull_request' &&
-      contains(github.event.pull_request.labels.*.name, 'automerge')
-    runs-on: ubuntu-latest
-    permissions:
-      contents: write
-      pull-requests: write
-    steps:
-      - name: Merge pull request
-        env:
-          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-        run: gh pr merge "${{ github.event.pull_request.number }}" --squash --delete-branch

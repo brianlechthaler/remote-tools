@@ -1,0 +1,28 @@
+apiVersion: v1
+kind: ConfigMap
+metadata:
+  name: remote-tools-config
+  namespace: remote-tools
+  labels:
+    app.kubernetes.io/name: remote-tools
+    app.kubernetes.io/part-of: remote-tools
+data:
+  # Hostname shown in the Tailscale admin console. Empty = use pod/node name.
+  TS_HOSTNAME: ""
+  # Extra flags for `tailscale up` / `tailscale set`.
+  # Do not enable --ssh here; Tailscale SSH runs inside the container and
+  # cannot see host users. Use host sshd over the tailnet instead.
+  TS_EXTRA_ARGS: "--accept-routes --advertise-exit-node"
+  TS_USERSPACE: "false"
+  TS_AUTH_ONCE: "true"
+  TS_STATE_DIR: "/var/lib/tailscale"
+  TS_ENABLE_HEALTH_CHECK: "true"
+  TS_LOCAL_ADDR_PORT: "127.0.0.1:9002"
+  # Empty disables containerboot's Kubernetes Secret state backend. We persist
+  # identity on the node via hostPath (parity with the Docker volume).
+  TS_KUBE_SECRET: ""
+
+  # Watchdog interval (seconds) for the networking + extra-args sidecar.
+  WATCHDOG_INTERVAL_SECONDS: "300"
+  # Health CronJob restart rate limit (matches Docker healthcheck.sh).
+  MAX_RESTARTS_PER_HOUR: "6"

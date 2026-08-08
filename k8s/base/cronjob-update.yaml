@@ -1,0 +1,52 @@
+apiVersion: batch/v1
+kind: CronJob
+metadata:
+  name: remote-tools-update
+  namespace: remote-tools
+  labels:
+    app.kubernetes.io/name: remote-tools
+    app.kubernetes.io/part-of: remote-tools
+    app.kubernetes.io/component: update
+spec:
+  # Matches remote-tools-update.timer (every 6 hours).
+  schedule: "0 */6 * * *"
+  concurrencyPolicy: Forbid
+  successfulJobsHistoryLimit: 3
+  failedJobsHistoryLimit: 3
+  jobTemplate:
+    spec:
+      backoffLimit: 1
+      activeDeadlineSeconds: 600
+      template:
+        metadata:
+          labels:
+            app.kubernetes.io/name: remote-tools
+            app.kubernetes.io/component: update
+        spec:
+          serviceAccountName: remote-tools
+          restartPolicy: Never
+          containers:
+            - name: update
+              image: alpine:3.21
+              imagePullPolicy: IfNotPresent
+              env:
+                - name: NAMESPACE
+                  valueFrom:
+                    fieldRef:
+                      fieldPath: metadata.namespace
+              command:
+                - /bin/sh
+                - -c
+                - |
+                  set -euo pipefail
+                  apk add --no-cache bash curl ca-certificates >/dev/null
+                  exec bash /scripts/k8s-update.sh
+              volumeMounts:
+                - name: scripts
+                  mountPath: /scripts
+                  readOnly: true
+          volumes:
+            - name: scripts
+              configMap:
+                name: remote-tools-scripts
+                defaultMode: 0755
