@@ -23,6 +23,7 @@ spec:
         app.kubernetes.io/component: tailscale
     spec:
       serviceAccountName: remote-tools
+      automountServiceAccountToken: false
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       # Pin to a dedicated node with: kubectl label node <name> remote-tools/exit-node=true
@@ -95,6 +96,11 @@ spec:
                 configMapKeyRef:
                   name: remote-tools-config
                   key: TS_LOCAL_ADDR_PORT
+            - name: TS_KUBE_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_KUBE_SECRET
             - name: POD_NODE_NAME
               valueFrom:
                 fieldRef:

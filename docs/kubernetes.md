@@ -10,7 +10,7 @@ Run **remote-tools** on Kubernetes with the same features as the Docker + system
 | TUN + caps | `/dev/net/tun`, `NET_ADMIN` | hostPath + capabilities |
 | Exit node flags | `TS_EXTRA_ARGS` | ConfigMap `TS_EXTRA_ARGS` |
 | Auth key | `/etc/remote-tools/env` | Secret `remote-tools-auth` |
-| Persistent identity | Docker volume | hostPath `/var/lib/remote-tools/tailscale` |
+| Persistent identity | Docker volume | hostPath `/var/lib/remote-tools/tailscale` (`TS_KUBE_SECRET=""`) |
 | Boot / restart | systemd + Docker restart | DaemonSet / Deployment + kubelet |
 | Host NAT / sysctl / firewall | `ensure-exit-node-networking.sh` | initContainer + watchdog sidecar |
 | Re-apply `--advertise-exit-node` | `apply-ts-extra-args.sh` | `apply-ts-extra-args-local.sh` via CronJob |

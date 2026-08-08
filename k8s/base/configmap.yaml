@@ -18,6 +18,10 @@ data:
   TS_STATE_DIR: "/var/lib/tailscale"
   TS_ENABLE_HEALTH_CHECK: "true"
   TS_LOCAL_ADDR_PORT: "127.0.0.1:9002"
+  # Empty disables containerboot's Kubernetes Secret state backend. We persist
+  # identity on the node via hostPath (parity with the Docker volume).
+  TS_KUBE_SECRET: ""
+
   # Watchdog interval (seconds) for the networking + extra-args sidecar.
   WATCHDOG_INTERVAL_SECONDS: "300"
   # Health CronJob restart rate limit (matches Docker healthcheck.sh).

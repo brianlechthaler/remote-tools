@@ -24,6 +24,10 @@ spec:
         app.kubernetes.io/component: tailscale
     spec:
       serviceAccountName: remote-tools
+      # Do not mount a SA token into the Tailscale pod: containerboot treats that
+      # as "Kubernetes mode" and requires RBAC on secret/tailscale. State lives
+      # on the node hostPath instead (see TS_KUBE_SECRET="").
+      automountServiceAccountToken: false
       hostNetwork: true
       dnsPolicy: ClusterFirstWithHostNet
       # Schedule onto every node by default, including control-plane (kind / single-node).
@@ -96,6 +100,11 @@ spec:
                 configMapKeyRef:
                   name: remote-tools-config
                   key: TS_LOCAL_ADDR_PORT
+            - name: TS_KUBE_SECRET
+              valueFrom:
+                configMapKeyRef:
+                  name: remote-tools-config
+                  key: TS_KUBE_SECRET
             # Fall back to node name when TS_HOSTNAME is empty.
             - name: POD_NODE_NAME
               valueFrom:
