@@ -13,7 +13,7 @@ Run **remote-tools** on Kubernetes with the same features as the Docker + system
 | Persistent identity | Docker volume | hostPath `/var/lib/remote-tools/tailscale` |
 | Boot / restart | systemd + Docker restart | DaemonSet / Deployment + kubelet |
 | Host NAT / sysctl / firewall | `ensure-exit-node-networking.sh` | initContainer + watchdog sidecar |
-| Re-apply `--advertise-exit-node` | `apply-ts-extra-args.sh` | `apply-ts-extra-args-local.sh` (postStart + CronJob) |
+| Re-apply `--advertise-exit-node` | `apply-ts-extra-args.sh` | `apply-ts-extra-args-local.sh` via CronJob |
 | Health watchdog (5m) | `remote-tools-health.timer` | probes + CronJob `remote-tools-health` |
 | Restart rate limit | 6 / hour | same, in `k8s-healthcheck.sh` |
 | Auto-update (6h) | `remote-tools-update.timer` | CronJob `remote-tools-update` (rollout restart + `imagePullPolicy: Always`) |
@@ -135,9 +135,9 @@ When you edit `scripts/ensure-exit-node-networking.sh`, `apply-ts-extra-args-loc
 ## How the pieces fit
 
 1. **initContainer `exit-node-networking`** — privileged Alpine pod that runs `ensure-exit-node-networking.sh` against the node (sysctl, UFW/firewalld when present, CGNAT MASQUERADE fallback).
-2. **container `tailscale`** — `ghcr.io/brianlechthaler/remote-tools` with `hostNetwork`, TUN, and Capabilities. `postStart` runs `apply-ts-extra-args-local.sh` so `--advertise-exit-node` sticks under `TS_AUTH_ONCE`.
+2. **container `tailscale`** — `ghcr.io/brianlechthaler/remote-tools` with `hostNetwork`, TUN, and Capabilities.
 3. **container `watchdog`** — every 5 minutes re-asserts host networking (UFW reloads / Docker iptables drift).
-4. **CronJob `remote-tools-health`** — every 5 minutes execs into pods, re-applies ExtraArgs, rate-limits pod deletes when unhealthy.
+4. **CronJob `remote-tools-health`** — every 5 minutes execs into pods, re-applies ExtraArgs (so `--advertise-exit-node` sticks under `TS_AUTH_ONCE`), and rate-limits pod deletes when unhealthy.
 5. **CronJob `remote-tools-update`** — every 6 hours `rollout restart` so `imagePullPolicy: Always` picks up GHCR `:latest`.
 
 ## Testing

@@ -122,15 +122,8 @@ spec:
             - name: scripts
               mountPath: /scripts
               readOnly: true
-          lifecycle:
-            postStart:
-              exec:
-                command:
-                  - /bin/sh
-                  - -c
-                  - |
-                    MAX_ATTEMPTS=5 RETRY_DELAY=2 LOG_TAG=remote-tools-poststart \
-                      /scripts/apply-ts-extra-args-local.sh || true
+          # ExtraArgs re-applied by CronJob remote-tools-health (no postStart:
+          # FailedPostStartHook kills the container under pending auth).
           startupProbe:
             exec:
               command:

@@ -588,19 +588,13 @@ run_kind_integration() {
     fi
 
     if kubectl -n "${NAMESPACE}" exec "${pod}" -c tailscale -- \
-      /scripts/apply-ts-extra-args-local.sh >/tmp/remote-tools-k8s-apply.out 2>&1
+      /bin/sh -c 'MAX_ATTEMPTS=2 RETRY_DELAY=1 /scripts/apply-ts-extra-args-local.sh' \
+      >/tmp/remote-tools-k8s-apply.out 2>&1
     then
       pass "apply-ts-extra-args-local.sh exits 0 in pod"
     else
-      # MAX_ATTEMPTS may need env; still accept exit 0 from script defaults.
-      if kubectl -n "${NAMESPACE}" exec -e MAX_ATTEMPTS=2 -e RETRY_DELAY=1 "${pod}" -c tailscale -- \
-        /scripts/apply-ts-extra-args-local.sh >/tmp/remote-tools-k8s-apply.out 2>&1
-      then
-        pass "apply-ts-extra-args-local.sh exits 0 in pod"
-      else
-        fail "apply-ts-extra-args-local.sh exits 0 in pod"
-        cat /tmp/remote-tools-k8s-apply.out >&2 || true
-      fi
+      fail "apply-ts-extra-args-local.sh exits 0 in pod"
+      cat /tmp/remote-tools-k8s-apply.out >&2 || true
     fi
 
     ipv4="$(docker exec "${CLUSTER_NAME}-control-plane" sysctl -n net.ipv4.ip_forward 2>/dev/null || echo missing)"
