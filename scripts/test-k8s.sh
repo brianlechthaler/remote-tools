@@ -391,24 +391,55 @@ run_docker_runtime_simulation() {
   fi
 }
 
-run_kwok_api_checks() {
-  echo
-  echo "== kwok API integration =="
+# Build a temporary overlay under k8s/overlays/ so resources can use a
+# relative ../../base path (kustomize rejects absolute resource roots).
+make_ci_overlay() {
+  local with_pull_never="${1:-0}"
+  local overlay_dir
+  overlay_dir="${ROOT}/k8s/overlays/.ci-test-$$"
+  rm -rf "${overlay_dir}"
+  mkdir -p "${overlay_dir}"
 
-  TMP_OVERLAY="$(mktemp -d)"
-  cat > "${TMP_OVERLAY}/kustomization.yaml" <<EOF
+  cat > "${overlay_dir}/kustomization.yaml" <<EOF
 apiVersion: kustomize.config.k8s.io/v1beta1
 kind: Kustomization
 resources:
-  - ${ROOT}/k8s/base
+  - ../../base
 images:
   - name: ghcr.io/brianlechthaler/remote-tools
     newName: ${IMAGE_LOCAL%%:*}
     newTag: ${IMAGE_LOCAL##*:}
 EOF
 
+  if [[ "${with_pull_never}" == "1" ]]; then
+    cat >> "${overlay_dir}/kustomization.yaml" <<'EOF'
+patches:
+  - target:
+      group: apps
+      version: v1
+      kind: DaemonSet
+      name: remote-tools
+    patch: |-
+      - op: replace
+        path: /spec/template/spec/containers/0/imagePullPolicy
+        value: Never
+EOF
+  fi
+
+  printf '%s' "${overlay_dir}"
+}
+
+run_kwok_api_checks() {
+  echo
+  echo "== kwok API integration =="
+
+  TMP_OVERLAY="$(make_ci_overlay 0)"
   BUILT="${TMP_OVERLAY}/built.yaml"
-  kustomize build "${TMP_OVERLAY}" > "${BUILT}"
+  if ! kustomize build "${TMP_OVERLAY}" > "${BUILT}"; then
+    fail "built kwok test manifests"
+    rm -rf "${TMP_OVERLAY}"
+    return 0
+  fi
 
   if kubectl apply -f "${BUILT}"; then
     pass "kubectl apply to kwok succeeded"
@@ -487,33 +518,14 @@ run_kind_integration() {
     fi
   fi
 
-  TMP_OVERLAY="$(mktemp -d)"
-  cat > "${TMP_OVERLAY}/kustomization.yaml" <<EOF
-apiVersion: kustomize.config.k8s.io/v1beta1
-kind: Kustomization
-resources:
-  - ${ROOT}/k8s/base
-images:
-  - name: ghcr.io/brianlechthaler/remote-tools
-    newName: ${IMAGE_LOCAL%%:*}
-    newTag: ${IMAGE_LOCAL##*:}
-patches:
-  - target:
-      group: apps
-      version: v1
-      kind: DaemonSet
-      name: remote-tools
-    patch: |-
-      - op: replace
-        path: /spec/template/spec/containers/0/imagePullPolicy
-        value: Never
-EOF
-
+  TMP_OVERLAY="$(make_ci_overlay 1)"
   BUILT="${TMP_OVERLAY}/built.yaml"
   if kustomize build "${TMP_OVERLAY}" > "${BUILT}"; then
     pass "built kind test manifests"
   else
     fail "built kind test manifests"
+    rm -rf "${TMP_OVERLAY}"
+    return 0
   fi
 
   if kubectl apply -f "${BUILT}"; then
@@ -521,6 +533,8 @@ EOF
   else
     fail "kubectl apply succeeded"
     kubectl get events -A --sort-by=.lastTimestamp | tail -40 >&2 || true
+    rm -rf "${TMP_OVERLAY}"
+    return 0
   fi
 
   deadline=$((SECONDS + WAIT_SECONDS))

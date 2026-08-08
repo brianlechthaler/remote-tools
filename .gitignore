@@ -2,3 +2,4 @@
 *.local
 config/env
 k8s/secret.env
+k8s/overlays/.ci-test-*
