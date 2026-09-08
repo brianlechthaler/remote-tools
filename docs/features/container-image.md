@@ -2,7 +2,7 @@
 
 Image used by Docker Compose and Kubernetes: `ghcr.io/brianlechthaler/remote-tools:latest`.
 
-Built from `tailscale/tailscale:v1.98.10` with health-check defaults and an in-container ExtraArgs helper for Kubernetes.
+Built from `tailscale/tailscale:v1.102.3` with health-check defaults and an in-container ExtraArgs helper for Kubernetes.
 
 ## Overview
 
@@ -25,7 +25,7 @@ Workflow: [`.github/workflows/build-and-publish.yml`](../../.github/workflows/bu
 
 `scripts/tailscale-version.sh current` reads the Dockerfile pin. `latest` walks Docker Hub tags for `vMAJOR.MINOR.PATCH` and takes the highest.
 
-If they differ, the workflow updates `Dockerfile` and this file (`tailscale/tailscale:v…`), then opens a PR labeled `automerge`. [Test](ci.md) squash-merges that PR after startup and Kubernetes jobs pass.
+If they differ, the workflow updates `Dockerfile` and this file (`tailscale/tailscale:v1.102.3…`), then opens a PR labeled `automerge`. [Test](ci.md) squash-merges that PR after startup and Kubernetes jobs pass.
 
 ## Related
 
