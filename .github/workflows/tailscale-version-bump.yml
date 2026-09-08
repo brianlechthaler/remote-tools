@@ -9,6 +9,7 @@ on:
 permissions:
   contents: write
   pull-requests: write
+  actions: write
 
 jobs:
   bump:
@@ -40,6 +41,7 @@ jobs:
           sed -i "s|tailscale/tailscale:v[0-9.]*|tailscale/tailscale:${LATEST}|" docs/features/container-image.md
 
       - name: Create pull request
+        id: pr
         if: steps.versions.outputs.update_needed == 'true'
         uses: peter-evans/create-pull-request@v7
         with:
@@ -58,3 +60,14 @@ jobs:
           add-paths: |
             Dockerfile
             docs/features/container-image.md
+
+      # PRs opened with GITHUB_TOKEN do not trigger pull_request workflows.
+      # workflow_dispatch is an allowed exception, so kick Test on the bump
+      # branch; its automerge job squash-merges when the automerge label is set.
+      - name: Run Test workflow on the bump branch
+        if: steps.pr.outputs.pull-request-number != ''
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          gh workflow run Test --ref "${{ steps.pr.outputs.pull-request-branch }}"
