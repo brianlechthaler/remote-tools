@@ -101,5 +101,5 @@ Kubernetes install applied (overlay=${OVERLAY}).
   kubectl -n ${NAMESPACE} logs -l app.kubernetes.io/component=tailscale -c tailscale -f
 
 Approve exit node: Machines → … → Edit route settings → Use as exit node
-Docs: ${ROOT}/docs/kubernetes.md
+Docs: ${ROOT}/docs/features/kubernetes.md
 EOF
