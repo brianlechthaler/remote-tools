@@ -32,12 +32,12 @@ jobs:
             echo "Update available: ${CURRENT} -> ${LATEST}"
           fi
 
-      - name: Update Dockerfile and README
+      - name: Update Dockerfile and image docs
         if: steps.versions.outputs.update_needed == 'true'
         run: |
           LATEST="${{ steps.versions.outputs.latest }}"
           sed -i "s|tailscale/tailscale:v[0-9.]*|tailscale/tailscale:${LATEST}|" Dockerfile
-          sed -i "s|tailscale/tailscale:v[0-9.]*|tailscale/tailscale:${LATEST}|" README.md
+          sed -i "s|tailscale/tailscale:v[0-9.]*|tailscale/tailscale:${LATEST}|" docs/features/container-image.md
 
       - name: Create pull request
         if: steps.versions.outputs.update_needed == 'true'
@@ -57,4 +57,4 @@ jobs:
           labels: automerge
           add-paths: |
             Dockerfile
-            README.md
+            docs/features/container-image.md

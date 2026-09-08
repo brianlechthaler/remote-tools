@@ -169,7 +169,7 @@ else
   pass "single-node overlay has no DaemonSet"
 fi
 
-docs="$(cat "${ROOT}/docs/kubernetes.md" "${ROOT}/README.md")"
+docs="$(cat "${ROOT}/docs/features/kubernetes.md" "${ROOT}/README.md")"
 expect_contains "${docs}" "kubectl" "docs mention kubectl"
 expect_contains "${docs}" "DaemonSet" "docs mention DaemonSet"
 expect_contains "${docs}" "exit node" "docs mention exit node"
