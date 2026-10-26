@@ -1,4 +1,4 @@
-FROM tailscale/tailscale:v1.104.1
+FROM tailscale/tailscale:v1.104.2
 
 LABEL org.opencontainers.image.source=https://github.com/brianlechthaler/remote-tools
 LABEL org.opencontainers.image.description="Tailscale remote access for unattended hosts"
